@@ -15,6 +15,12 @@ import type { LoadedSource } from '@craft-agent/shared/sources/types'
 import type { LoadedSkill } from '@craft-agent/shared/skills/types'
 import { Spinner } from '@craft-agent/ui'
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from './components/ui/sheet'
+import {
   MessageSquare,
   Plug,
   Wand2,
@@ -280,96 +286,98 @@ function MainApp() {
         </button>
       </div>
 
-      {/* Mobile navigation overlay */}
-      {isMobileNavOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-40 bg-black/50"
-          onClick={() => setIsMobileNavOpen(false)}
-        />
-      )}
+      {/* Mobile navigation sheet */}
+      <Sheet open={isMobileNavOpen} onOpenChange={setIsMobileNavOpen} direction="left">
+        <SheetContent side="left" className="w-72 p-0 bg-foreground-2">
+          <SheetHeader className="px-4 py-3 border-b border-foreground/5">
+            <div className="flex items-center gap-3">
+              <CraftAgentLogo className="w-7 h-7 text-accent" />
+              <SheetTitle className="text-foreground">Craft Agents</SheetTitle>
+            </div>
+          </SheetHeader>
 
-      {/* Mobile navigation drawer */}
-      <div className={`md:hidden fixed top-14 right-0 bottom-0 w-64 bg-foreground-2 z-50 transform transition-transform duration-200 ease-out overflow-y-auto ${
-        isMobileNavOpen ? 'translate-x-0' : 'translate-x-full'
-      }`}>
-        <nav className="p-4 space-y-1">
-          {/* All Chats with expandable status list */}
-          <div>
+          <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+            {/* New Chat button */}
             <button
+              onClick={() => {
+                handleNewSession()
+                setIsMobileNavOpen(false)
+              }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-accent text-white font-medium mb-3"
+            >
+              <Plus className="w-5 h-5" />
+              <span>New Chat</span>
+            </button>
+
+            {/* All Chats with expandable status list */}
+            <SidebarSection
+              icon={<MessageSquare className="w-4 h-4" />}
+              label="All Chats"
+              badge={sessions.length}
+              isActive={activeSection === 'chats' && selectedStatus === 'all'}
               onClick={() => {
                 handleSectionChange('chats')
                 setSelectedStatus('all')
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                activeSection === 'chats' && selectedStatus === 'all'
-                  ? 'bg-accent text-white'
-                  : 'text-foreground hover:bg-foreground/5'
-              }`}
+              defaultExpanded
             >
-              <MessageSquare className="w-5 h-5" />
-              <span className="flex-1 text-left font-medium">All Chats</span>
-              <span className="text-xs opacity-70">{sessions.length}</span>
-            </button>
-
-            {/* Status categories */}
-            <div className="ml-6 mt-1 space-y-0.5">
               {STATUS_ORDER.map(status => (
-                <button
+                <SidebarSubItem
                   key={status}
+                  icon={STATUS_CONFIG[status].icon}
+                  label={STATUS_CONFIG[status].label}
+                  badge={sessionCounts[status] || undefined}
+                  isActive={activeSection === 'chats' && selectedStatus === status}
+                  colorClass={STATUS_CONFIG[status].colorClass}
                   onClick={() => {
                     handleSectionChange('chats')
                     setSelectedStatus(status)
                   }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    activeSection === 'chats' && selectedStatus === status
-                      ? 'bg-accent text-white'
-                      : `${STATUS_CONFIG[status].colorClass} hover:bg-foreground/5`
-                  }`}
-                >
-                  {STATUS_CONFIG[status].icon}
-                  <span className="flex-1 text-left">{STATUS_CONFIG[status].label}</span>
-                  {sessionCounts[status] > 0 && (
-                    <span className="text-xs opacity-70">{sessionCounts[status]}</span>
-                  )}
-                </button>
+                />
               ))}
-            </div>
-          </div>
+            </SidebarSection>
 
-          <MobileNavButton
-            icon={<Flag className="w-5 h-5" />}
-            label="Flagged"
-            isActive={activeSection === 'flagged'}
-            onClick={() => handleSectionChange('flagged')}
-            badge={flaggedSessions.length > 0 ? flaggedSessions.length : undefined}
-          />
-          <MobileNavButton
-            icon={<Plug className="w-5 h-5" />}
-            label="Sources"
-            isActive={activeSection === 'sources'}
-            onClick={() => handleSectionChange('sources')}
-          />
-          <MobileNavButton
-            icon={<Wand2 className="w-5 h-5" />}
-            label="Skills"
-            isActive={activeSection === 'skills'}
-            onClick={() => handleSectionChange('skills')}
-          />
-          <MobileNavButton
-            icon={<Settings className="w-5 h-5" />}
-            label="Settings"
-            isActive={activeSection === 'settings'}
-            onClick={() => handleSectionChange('settings')}
-          />
-          <div className="pt-4 mt-4 border-t border-foreground/10">
-            <MobileNavButton
-              icon={<LogOut className="w-5 h-5" />}
+            <SidebarItem
+              icon={<Flag className="w-4 h-4" />}
+              label="Flagged"
+              badge={flaggedSessions.length || undefined}
+              isActive={activeSection === 'flagged'}
+              onClick={() => handleSectionChange('flagged')}
+            />
+
+            <div className="h-px bg-foreground/5 my-2" />
+
+            <SidebarItem
+              icon={<Plug className="w-4 h-4" />}
+              label="Sources"
+              badge={sources.length || undefined}
+              isActive={activeSection === 'sources'}
+              onClick={() => handleSectionChange('sources')}
+            />
+            <SidebarItem
+              icon={<Wand2 className="w-4 h-4" />}
+              label="Skills"
+              badge={skills.length || undefined}
+              isActive={activeSection === 'skills'}
+              onClick={() => handleSectionChange('skills')}
+            />
+            <SidebarItem
+              icon={<Settings className="w-4 h-4" />}
+              label="Settings"
+              isActive={activeSection === 'settings'}
+              onClick={() => handleSectionChange('settings')}
+            />
+          </nav>
+
+          <div className="p-3 border-t border-foreground/5">
+            <SidebarItem
+              icon={<LogOut className="w-4 h-4" />}
               label="Logout"
               onClick={logout}
             />
           </div>
-        </nav>
-      </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Desktop Left Sidebar - Navigation */}
       <div className="hidden md:flex w-14 flex-col items-center py-3 bg-foreground-3 border-r border-foreground/5 shrink-0">
@@ -620,40 +628,138 @@ function NavButton({
 }
 
 /**
- * Mobile Navigation button component
+ * Sidebar item component for sheet navigation
  */
-function MobileNavButton({
+function SidebarItem({
   icon,
   label,
   isActive,
   onClick,
   badge,
+  colorClass,
 }: {
   icon: React.ReactNode
   label: string
   isActive?: boolean
   onClick: () => void
   badge?: number
+  colorClass?: string
 }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
         isActive
           ? 'bg-accent text-white'
-          : 'text-foreground hover:bg-foreground/5'
+          : `${colorClass || 'text-foreground'} hover:bg-foreground/5`
       }`}
     >
-      {icon}
-      <span className="flex-1 text-left font-medium">{label}</span>
+      <span className={`shrink-0 ${isActive ? 'text-white' : ''}`}>{icon}</span>
+      <span className="flex-1 text-left">{label}</span>
       {badge !== undefined && badge > 0 && (
-        <span className={`px-2 py-0.5 text-xs rounded-full ${
-          isActive ? 'bg-white/20' : 'bg-accent text-white'
-        }`}>
+        <span className={`text-xs ${isActive ? 'text-white/70' : 'text-foreground-40'}`}>
           {badge}
         </span>
       )}
     </button>
+  )
+}
+
+/**
+ * Sidebar sub-item component (for nested items)
+ */
+function SidebarSubItem({
+  icon,
+  label,
+  isActive,
+  onClick,
+  badge,
+  colorClass,
+}: {
+  icon: React.ReactNode
+  label: string
+  isActive?: boolean
+  onClick: () => void
+  badge?: number
+  colorClass?: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
+        isActive
+          ? 'bg-accent text-white'
+          : `${colorClass || 'text-foreground-70'} hover:bg-foreground/5`
+      }`}
+    >
+      <span className={`shrink-0 [&>svg]:w-3.5 [&>svg]:h-3.5 ${isActive ? 'text-white' : ''}`}>{icon}</span>
+      <span className="flex-1 text-left">{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className={`text-xs ${isActive ? 'text-white/70' : 'text-foreground-40'}`}>
+          {badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
+/**
+ * Sidebar section with collapsible children
+ */
+function SidebarSection({
+  icon,
+  label,
+  badge,
+  isActive,
+  onClick,
+  children,
+  defaultExpanded = false,
+}: {
+  icon: React.ReactNode
+  label: string
+  badge?: number
+  isActive?: boolean
+  onClick: () => void
+  children?: React.ReactNode
+  defaultExpanded?: boolean
+}) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+
+  return (
+    <div>
+      <button
+        onClick={onClick}
+        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
+          isActive
+            ? 'bg-accent text-white'
+            : 'text-foreground hover:bg-foreground/5'
+        }`}
+      >
+        <span className={`shrink-0 ${isActive ? 'text-white' : ''}`}>{icon}</span>
+        <span className="flex-1 text-left">{label}</span>
+        {badge !== undefined && badge > 0 && (
+          <span className={`text-xs ${isActive ? 'text-white/70' : 'text-foreground-40'}`}>
+            {badge}
+          </span>
+        )}
+        {children && (
+          <ChevronDown
+            className={`w-4 h-4 transition-transform ${isExpanded ? '' : '-rotate-90'} ${
+              isActive ? 'text-white/70' : 'text-foreground-40'
+            }`}
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsExpanded(!isExpanded)
+            }}
+          />
+        )}
+      </button>
+      {children && isExpanded && (
+        <div className="ml-4 mt-0.5 pl-3 border-l border-foreground/10 space-y-0.5">
+          {children}
+        </div>
+      )}
+    </div>
   )
 }
 
