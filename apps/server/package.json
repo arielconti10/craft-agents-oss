@@ -1,0 +1,24 @@
+{
+  "name": "@craft-agent/server",
+  "version": "0.2.25",
+  "description": "Backend server for Craft Agents web app",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target node",
+    "start": "bun run dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@craft-agent/shared": "workspace:*",
+    "@craft-agent/core": "workspace:*",
+    "@hono/node-ws": "^1.1.1",
+    "hono": "^4.7.11",
+    "jose": "^6.0.11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.0.0"
+  }
+}
