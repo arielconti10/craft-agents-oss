@@ -49,6 +49,12 @@
     "viewer:dev": "lsof -ti:5174 | xargs kill -9 2>/dev/null; vite dev --config apps/viewer/vite.config.ts --open /s/tz5-13I84pwK_he",
     "viewer:build": "vite build --config apps/viewer/vite.config.ts",
     "viewer:preview": "vite preview --config apps/viewer/vite.config.ts",
+    "web:dev": "concurrently -k \"bun run server:dev\" \"bun run web:dev:vite\"",
+    "web:dev:vite": "vite dev --config apps/web/vite.config.ts",
+    "web:build": "vite build --config apps/web/vite.config.ts",
+    "web:preview": "vite preview --config apps/web/vite.config.ts",
+    "server:dev": "cd apps/server && bun run dev",
+    "server:build": "cd apps/server && bun run build",
     "marketing:dev": "vite dev --config apps/marketing/vite.config.ts",
     "marketing:build": "vite build --config apps/marketing/vite.config.ts",
     "marketing:preview": "vite preview --config apps/marketing/vite.config.ts",
@@ -59,6 +65,9 @@
     "oss:sync": "bun run scripts/oss-sync.ts"
   },
   "devDependencies": {
+    "@hono/node-ws": "^1.1.1",
+    "hono": "^4.7.11",
+    "jose": "^6.0.11",
     "@aws-sdk/client-s3": "^3.947.0",
     "@electron/packager": "^19.0.1",
     "@rollup/rollup-win32-arm64-msvc": "^4.55.1",
