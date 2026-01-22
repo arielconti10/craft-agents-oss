@@ -1,10 +1,9 @@
 /**
  * Craft Agents Web App
  *
- * Main application component with 3-panel layout matching the Electron app:
- * 1. Left Sidebar - Navigation buttons (Chats, Sources, Skills, Settings)
- * 2. Navigator Panel - List view for selected section
- * 3. Main Content - Detail view (chat, source details, settings)
+ * Main application component with responsive layout:
+ * - Desktop: 3-panel layout (nav sidebar, list panel, content)
+ * - Mobile: Single panel with bottom navigation and slide-out drawer
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
@@ -23,8 +22,10 @@ import {
   Flag,
   Plus,
   ChevronRight,
+  ChevronLeft,
   LogOut,
-  AlertCircle,
+  Menu,
+  X,
 } from 'lucide-react'
 
 // Navigation sections
@@ -64,6 +65,10 @@ function MainApp() {
 
   // Navigation state
   const [activeSection, setActiveSection] = useState<NavSection>('chats')
+
+  // Mobile UI state
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+  const [showListPanel, setShowListPanel] = useState(true)
 
   // Sessions state
   const [sessions, setSessions] = useState<Session[]>([])
@@ -174,6 +179,8 @@ function MainApp() {
       setSessions(prev => [session, ...prev])
       setSelectedSession(session)
       setActiveSection('chats')
+      setShowListPanel(false) // Show chat on mobile
+      setIsMobileNavOpen(false)
     } catch (error) {
       console.error('Failed to create session:', error)
     }
@@ -183,6 +190,8 @@ function MainApp() {
   const handleSelectSession = async (session: Session) => {
     const fullSession = await api.getSessionMessages(session.id)
     setSelectedSession(fullSession)
+    setShowListPanel(false) // Show chat on mobile
+    setIsMobileNavOpen(false)
   }
 
   // Update session in list after changes
@@ -193,13 +202,106 @@ function MainApp() {
     setSelectedSession(updatedSession)
   }, [])
 
+  // Handle section change
+  const handleSectionChange = (section: NavSection) => {
+    setActiveSection(section)
+    setShowListPanel(true)
+    setIsMobileNavOpen(false)
+  }
+
+  // Handle back button on mobile
+  const handleBackToList = () => {
+    setShowListPanel(true)
+  }
+
   // Filter flagged sessions
   const flaggedSessions = sessions.filter(s => s.isFlagged)
 
+  // Check if we should show the detail view
+  const hasDetailView = (activeSection === 'chats' || activeSection === 'flagged') && selectedSession
+    || activeSection === 'sources' && selectedSource
+    || activeSection === 'settings'
+
   return (
-    <div className="h-screen bg-background flex">
-      {/* Left Sidebar - Navigation */}
-      <div className="w-14 flex flex-col items-center py-3 bg-foreground-3 border-r border-foreground/5">
+    <div className="h-screen bg-background flex flex-col md:flex-row overflow-hidden">
+      {/* Mobile header */}
+      <div className="md:hidden flex items-center justify-between p-3 bg-foreground-2 border-b border-foreground/5 shrink-0">
+        <div className="flex items-center gap-3">
+          {!showListPanel && hasDetailView && (
+            <button
+              onClick={handleBackToList}
+              className="p-2 -ml-2 rounded-lg text-foreground-50 hover:bg-foreground/5"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
+          <CraftAgentLogo className="w-7 h-7 text-accent" />
+          <span className="font-semibold text-foreground">Craft Agents</span>
+        </div>
+        <button
+          onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
+          className="p-2 rounded-lg text-foreground-50 hover:bg-foreground/5"
+        >
+          {isMobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+      </div>
+
+      {/* Mobile navigation overlay */}
+      {isMobileNavOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={() => setIsMobileNavOpen(false)}
+        />
+      )}
+
+      {/* Mobile navigation drawer */}
+      <div className={`md:hidden fixed top-14 right-0 bottom-0 w-64 bg-foreground-2 z-50 transform transition-transform duration-200 ease-out ${
+        isMobileNavOpen ? 'translate-x-0' : 'translate-x-full'
+      }`}>
+        <nav className="p-4 space-y-1">
+          <MobileNavButton
+            icon={<MessageSquare className="w-5 h-5" />}
+            label="All Chats"
+            isActive={activeSection === 'chats'}
+            onClick={() => handleSectionChange('chats')}
+          />
+          <MobileNavButton
+            icon={<Flag className="w-5 h-5" />}
+            label="Flagged"
+            isActive={activeSection === 'flagged'}
+            onClick={() => handleSectionChange('flagged')}
+            badge={flaggedSessions.length > 0 ? flaggedSessions.length : undefined}
+          />
+          <MobileNavButton
+            icon={<Plug className="w-5 h-5" />}
+            label="Sources"
+            isActive={activeSection === 'sources'}
+            onClick={() => handleSectionChange('sources')}
+          />
+          <MobileNavButton
+            icon={<Wand2 className="w-5 h-5" />}
+            label="Skills"
+            isActive={activeSection === 'skills'}
+            onClick={() => handleSectionChange('skills')}
+          />
+          <MobileNavButton
+            icon={<Settings className="w-5 h-5" />}
+            label="Settings"
+            isActive={activeSection === 'settings'}
+            onClick={() => handleSectionChange('settings')}
+          />
+          <div className="pt-4 mt-4 border-t border-foreground/10">
+            <MobileNavButton
+              icon={<LogOut className="w-5 h-5" />}
+              label="Logout"
+              onClick={logout}
+            />
+          </div>
+        </nav>
+      </div>
+
+      {/* Desktop Left Sidebar - Navigation */}
+      <div className="hidden md:flex w-14 flex-col items-center py-3 bg-foreground-3 border-r border-foreground/5 shrink-0">
         {/* Logo */}
         <div className="mb-4">
           <CraftAgentLogo className="w-8 h-8 text-accent" />
@@ -250,8 +352,10 @@ function MainApp() {
         </div>
       </div>
 
-      {/* Navigator Panel - List view */}
-      <div className="w-72 flex flex-col bg-foreground-2 shadow-middle">
+      {/* Navigator Panel - List view (desktop always, mobile conditionally) */}
+      <div className={`${
+        showListPanel ? 'flex' : 'hidden'
+      } md:flex w-full md:w-72 flex-col bg-foreground-2 md:shadow-middle shrink-0`}>
         {/* Section header */}
         <div className="p-4 border-b border-foreground/5">
           <h2 className="text-base font-semibold text-foreground capitalize">
@@ -271,7 +375,7 @@ function MainApp() {
           <div className="p-3 border-b border-foreground/5">
             <button
               onClick={handleNewSession}
-              className="w-full px-4 py-2.5 bg-accent text-white rounded-lg shadow-minimal hover:opacity-90 transition-opacity font-medium flex items-center justify-center gap-2"
+              className="w-full px-4 py-3 md:py-2.5 bg-accent text-white rounded-lg shadow-minimal hover:opacity-90 active:opacity-80 transition-opacity font-medium flex items-center justify-center gap-2"
             >
               <Plus className="w-4 h-4" />
               New Chat
@@ -308,7 +412,10 @@ function MainApp() {
               sources={sources}
               selectedSource={selectedSource}
               isLoading={isLoadingSources}
-              onSelect={setSelectedSource}
+              onSelect={(source) => {
+                setSelectedSource(source)
+                setShowListPanel(false)
+              }}
             />
           )}
 
@@ -322,12 +429,12 @@ function MainApp() {
 
           {/* Settings list */}
           {activeSection === 'settings' && (
-            <SettingsList />
+            <SettingsList onSelect={() => setShowListPanel(false)} />
           )}
         </div>
 
-        {/* Platform info */}
-        <div className="p-3 border-t border-foreground/5">
+        {/* Platform info - desktop only */}
+        <div className="hidden md:block p-3 border-t border-foreground/5">
           <div className="text-foreground-40 text-xs">
             {capabilities.canRunLocalMcp ? 'Local MCP' : 'Remote MCP'} •
             {capabilities.hasMultiWindow ? ' Multi-window' : ' Single-window'}
@@ -336,7 +443,9 @@ function MainApp() {
       </div>
 
       {/* Main Content Panel */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 ${
+        !showListPanel ? 'flex' : 'hidden md:flex'
+      }`}>
         {(activeSection === 'chats' || activeSection === 'flagged') && selectedSession ? (
           <ChatPage
             session={selectedSession}
@@ -359,7 +468,7 @@ function MainApp() {
 }
 
 /**
- * Navigation button component
+ * Desktop Navigation button component
  */
 function NavButton({
   icon,
@@ -388,6 +497,44 @@ function NavButton({
       {badge !== undefined && badge > 0 && (
         <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent text-white text-[10px] rounded-full flex items-center justify-center">
           {badge > 9 ? '9+' : badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
+/**
+ * Mobile Navigation button component
+ */
+function MobileNavButton({
+  icon,
+  label,
+  isActive,
+  onClick,
+  badge,
+}: {
+  icon: React.ReactNode
+  label: string
+  isActive?: boolean
+  onClick: () => void
+  badge?: number
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+        isActive
+          ? 'bg-accent text-white'
+          : 'text-foreground hover:bg-foreground/5'
+      }`}
+    >
+      {icon}
+      <span className="flex-1 text-left font-medium">{label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className={`px-2 py-0.5 text-xs rounded-full ${
+          isActive ? 'bg-white/20' : 'bg-accent text-white'
+        }`}>
+          {badge}
         </span>
       )}
     </button>
@@ -428,10 +575,10 @@ function SessionList({
         <li key={session.id}>
           <button
             onClick={() => onSelect(session)}
-            className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
+            className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
               selectedSession?.id === session.id
                 ? 'bg-accent text-white'
-                : 'text-foreground hover:bg-foreground/5'
+                : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
             }`}
           >
             <div className="flex items-center gap-2">
@@ -498,10 +645,10 @@ function SourcesList({
         <li key={source.config.slug}>
           <button
             onClick={() => onSelect(source)}
-            className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
+            className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
               selectedSource?.config.slug === source.config.slug
                 ? 'bg-accent text-white'
-                : 'text-foreground hover:bg-foreground/5'
+                : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
             }`}
           >
             <div className="flex items-center justify-between">
@@ -576,7 +723,7 @@ function SkillsList({
     <ul className="px-2 py-1">
       {skills.map((skill) => (
         <li key={skill.slug}>
-          <div className="px-3 py-2.5 rounded-lg hover:bg-foreground/5 transition-colors">
+          <div className="px-3 py-3 md:py-2.5 rounded-lg hover:bg-foreground/5 active:bg-foreground/10 transition-colors">
             <div className="flex items-center gap-2">
               <Wand2 className="w-4 h-4 text-accent shrink-0" />
               <span className="font-medium text-sm text-foreground">{skill.metadata.name}</span>
@@ -596,7 +743,7 @@ function SkillsList({
 /**
  * Settings list component
  */
-function SettingsList() {
+function SettingsList({ onSelect }: { onSelect?: () => void }) {
   const settingItems = [
     { id: 'app', label: 'App Settings', description: 'Theme, model, and preferences' },
     { id: 'workspace', label: 'Workspace', description: 'Name, icon, and defaults' },
@@ -607,13 +754,16 @@ function SettingsList() {
     <ul className="px-2 py-1">
       {settingItems.map((item) => (
         <li key={item.id}>
-          <div className="px-3 py-2.5 rounded-lg hover:bg-foreground/5 transition-colors cursor-pointer">
+          <button
+            onClick={onSelect}
+            className="w-full text-left px-3 py-3 md:py-2.5 rounded-lg hover:bg-foreground/5 active:bg-foreground/10 transition-colors"
+          >
             <div className="flex items-center justify-between">
               <span className="font-medium text-sm text-foreground">{item.label}</span>
               <ChevronRight className="w-4 h-4 text-foreground-30" />
             </div>
             <p className="text-xs text-foreground-50 mt-0.5">{item.description}</p>
-          </div>
+          </button>
         </li>
       ))}
     </ul>
@@ -644,13 +794,13 @@ function SourceDetail({ source, workspaceId }: { source: LoadedSource; workspace
 
   return (
     <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-8">
+      <div className="max-w-2xl mx-auto p-4 md:p-8">
         <div className="flex items-center gap-4 mb-6">
           <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
             <Plug className="w-6 h-6 text-accent" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{source.config.name}</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-foreground">{source.config.name}</h1>
             <p className="text-foreground-50">{source.config.type === 'mcp' ? 'MCP Server' : 'API Source'}</p>
           </div>
         </div>
@@ -659,7 +809,7 @@ function SourceDetail({ source, workspaceId }: { source: LoadedSource; workspace
           <p className="text-foreground-70 mb-6">{source.config.tagline}</p>
         )}
 
-        <div className="bg-foreground-2 rounded-xl p-6">
+        <div className="bg-foreground-2 rounded-xl p-4 md:p-6">
           <h2 className="font-semibold text-foreground mb-4">Available Tools</h2>
           {isLoadingTools ? (
             <div className="flex items-center gap-2 text-foreground-50">
@@ -701,8 +851,6 @@ function SettingsDetail({
   isLoading: boolean
   workspaceId: string | null
 }) {
-  const api = usePlatformAPI()
-
   if (isLoading) {
     return (
       <div className="flex-1 bg-foreground-1.5 flex items-center justify-center">
@@ -713,11 +861,11 @@ function SettingsDetail({
 
   return (
     <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-8">
-        <h1 className="text-2xl font-bold text-foreground mb-6">Settings</h1>
+      <div className="max-w-2xl mx-auto p-4 md:p-8">
+        <h1 className="text-xl md:text-2xl font-bold text-foreground mb-6">Settings</h1>
 
         {/* Workspace Settings */}
-        <div className="bg-foreground-2 rounded-xl p-6 mb-6">
+        <div className="bg-foreground-2 rounded-xl p-4 md:p-6 mb-6">
           <h2 className="font-semibold text-foreground mb-4">Workspace</h2>
           <div className="space-y-4">
             <div>
@@ -736,7 +884,7 @@ function SettingsDetail({
         </div>
 
         {/* App Settings */}
-        <div className="bg-foreground-2 rounded-xl p-6">
+        <div className="bg-foreground-2 rounded-xl p-4 md:p-6">
           <h2 className="font-semibold text-foreground mb-4">App</h2>
           <div className="space-y-4">
             <div>
@@ -759,7 +907,7 @@ function SettingsDetail({
  */
 function EmptyState({ section, onNewChat }: { section: NavSection; onNewChat: () => void }) {
   return (
-    <div className="flex-1 flex items-center justify-center bg-foreground-1.5">
+    <div className="flex-1 flex items-center justify-center bg-foreground-1.5 p-4">
       <div className="text-center">
         <CraftAgentLogo className="w-16 h-16 text-foreground-10 mx-auto mb-4" />
         {section === 'chats' || section === 'flagged' ? (
@@ -768,7 +916,7 @@ function EmptyState({ section, onNewChat }: { section: NavSection; onNewChat: ()
             <p className="text-foreground-30 text-sm mb-4">Select a chat or create a new one to get started</p>
             <button
               onClick={onNewChat}
-              className="px-4 py-2 bg-accent text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
+              className="px-4 py-3 md:py-2 bg-accent text-white rounded-lg font-medium hover:opacity-90 active:opacity-80 transition-opacity"
             >
               New Chat
             </button>
