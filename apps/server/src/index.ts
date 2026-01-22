@@ -8,21 +8,17 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
-import { createNodeWebSocket } from '@hono/node-ws'
 
 import { authRoutes } from './routes/auth'
 import { sessionsRoutes } from './routes/sessions'
 import { workspacesRoutes } from './routes/workspaces'
 import { settingsRoutes } from './routes/settings'
 import { themesRoutes } from './routes/themes'
-import { wsHandler } from './ws/handler'
+import { createWebSocketHandler } from './ws/handler'
 import { authMiddleware } from './middleware/auth'
 
 // Create Hono app
 const app = new Hono()
-
-// Create WebSocket handler
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
 // ==========================================
 // Middleware
@@ -69,12 +65,6 @@ api.route('/themes', themesRoutes)
 app.route('/api', api)
 
 // ==========================================
-// WebSocket Endpoint
-// ==========================================
-
-app.get('/ws', upgradeWebSocket(wsHandler))
-
-// ==========================================
 // Error Handling
 // ==========================================
 
@@ -102,9 +92,30 @@ console.log(`
 ╚═══════════════════════════════════════════════════╝
 `)
 
-// Export for Bun
+// Create WebSocket handler for Bun
+const wsHandler = createWebSocketHandler()
+
+// Export for Bun.serve()
 export default {
   port,
-  fetch: app.fetch,
-  websocket: injectWebSocket,
+  fetch(req: Request, server: unknown) {
+    const url = new URL(req.url)
+
+    // Handle WebSocket upgrade for /ws endpoint
+    if (url.pathname === '/ws') {
+      // Get token from query string
+      const token = url.searchParams.get('token')
+
+      // @ts-expect-error - Bun server type
+      const success = server.upgrade(req, { data: { token } })
+      if (success) {
+        return undefined // Bun handles the response
+      }
+      return new Response('WebSocket upgrade failed', { status: 400 })
+    }
+
+    // Handle regular HTTP requests with Hono
+    return app.fetch(req)
+  },
+  websocket: wsHandler,
 }

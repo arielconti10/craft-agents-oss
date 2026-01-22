@@ -3,12 +3,13 @@
  *
  * Manages WebSocket connections and broadcasts session events
  * to subscribed clients.
+ *
+ * Uses Bun's native WebSocket support.
  */
 
-import type { WSContext } from 'hono/ws'
 import { verifyToken, type AuthUser } from '../middleware/auth'
-import { getSessionManager } from '../services/session-manager'
 import type { SessionEvent } from '@craft-agent/shared/platform/types'
+import type { ServerWebSocket } from 'bun'
 
 /**
  * Client message types
@@ -29,215 +30,63 @@ interface ServerMessage {
 }
 
 /**
- * Connected WebSocket client
+ * WebSocket data attached to connection
  */
-interface WebSocketClient {
-  ws: WSContext
-  user: AuthUser
+interface WebSocketData {
+  token: string | null
+  user: AuthUser | null
   subscribedSessions: Set<string>
 }
 
 /**
- * WebSocket connection manager
+ * Connected WebSocket clients by session ID
  */
-class WebSocketManager {
-  private clients = new Map<WSContext, WebSocketClient>()
-  private sessionSubscribers = new Map<string, Set<WSContext>>()
+const sessionSubscribers = new Map<string, Set<ServerWebSocket<WebSocketData>>>()
 
-  /**
-   * Register a new client
-   */
-  addClient(ws: WSContext, user: AuthUser): void {
-    this.clients.set(ws, {
-      ws,
-      user,
-      subscribedSessions: new Set(),
-    })
-  }
-
-  /**
-   * Remove a client
-   */
-  removeClient(ws: WSContext): void {
-    const client = this.clients.get(ws)
-    if (client) {
-      // Unsubscribe from all sessions
-      for (const sessionId of client.subscribedSessions) {
-        this.unsubscribeFromSession(ws, sessionId)
-      }
-      this.clients.delete(ws)
-    }
-  }
-
-  /**
-   * Subscribe a client to a session's events
-   */
-  subscribeToSession(ws: WSContext, sessionId: string): void {
-    const client = this.clients.get(ws)
-    if (!client) return
-
-    client.subscribedSessions.add(sessionId)
-
-    if (!this.sessionSubscribers.has(sessionId)) {
-      this.sessionSubscribers.set(sessionId, new Set())
-    }
-    this.sessionSubscribers.get(sessionId)!.add(ws)
-  }
-
-  /**
-   * Unsubscribe a client from a session
-   */
-  unsubscribeFromSession(ws: WSContext, sessionId: string): void {
-    const client = this.clients.get(ws)
-    if (client) {
-      client.subscribedSessions.delete(sessionId)
-    }
-
-    const subscribers = this.sessionSubscribers.get(sessionId)
-    if (subscribers) {
-      subscribers.delete(ws)
-      if (subscribers.size === 0) {
-        this.sessionSubscribers.delete(sessionId)
-      }
-    }
-  }
-
-  /**
-   * Broadcast an event to all subscribers of a session
-   */
-  broadcastSessionEvent(sessionId: string, event: SessionEvent): void {
-    const subscribers = this.sessionSubscribers.get(sessionId)
-    if (!subscribers) return
-
-    const message: ServerMessage = {
-      type: 'session_event',
-      sessionId,
-      event,
-    }
-
-    const data = JSON.stringify(message)
-
-    for (const ws of subscribers) {
-      try {
-        ws.send(data)
-      } catch (err) {
-        console.error('Error sending WebSocket message:', err)
-        this.removeClient(ws)
-      }
-    }
-  }
-
-  /**
-   * Send a message to a specific client
-   */
-  sendToClient(ws: WSContext, message: ServerMessage): void {
-    try {
-      ws.send(JSON.stringify(message))
-    } catch (err) {
-      console.error('Error sending WebSocket message:', err)
-      this.removeClient(ws)
-    }
-  }
-
-  /**
-   * Get client for a WebSocket
-   */
-  getClient(ws: WSContext): WebSocketClient | undefined {
-    return this.clients.get(ws)
+/**
+ * Send a message to a WebSocket client
+ */
+function sendMessage(ws: ServerWebSocket<WebSocketData>, message: ServerMessage): void {
+  try {
+    ws.send(JSON.stringify(message))
+  } catch (err) {
+    console.error('Error sending WebSocket message:', err)
   }
 }
 
-// Global WebSocket manager instance
-export const wsManager = new WebSocketManager()
+/**
+ * Subscribe a client to a session's events
+ */
+function subscribeToSession(ws: ServerWebSocket<WebSocketData>, sessionId: string): void {
+  ws.data.subscribedSessions.add(sessionId)
+
+  if (!sessionSubscribers.has(sessionId)) {
+    sessionSubscribers.set(sessionId, new Set())
+  }
+  sessionSubscribers.get(sessionId)!.add(ws)
+}
 
 /**
- * WebSocket upgrade handler
- *
- * Authenticates the connection and sets up event handlers.
+ * Unsubscribe a client from a session
  */
-export const wsHandler = (c: { req: { query: (key: string) => string | undefined } }) => {
-  // Get token from query string
-  const token = c.req.query('token')
+function unsubscribeFromSession(ws: ServerWebSocket<WebSocketData>, sessionId: string): void {
+  ws.data.subscribedSessions.delete(sessionId)
 
-  return {
-    async onOpen(_event: Event, ws: WSContext) {
-      // Verify token
-      if (!token) {
-        wsManager.sendToClient(ws, {
-          type: 'error',
-          message: 'Missing authentication token',
-        })
-        ws.close(4001, 'Missing authentication token')
-        return
-      }
+  const subscribers = sessionSubscribers.get(sessionId)
+  if (subscribers) {
+    subscribers.delete(ws)
+    if (subscribers.size === 0) {
+      sessionSubscribers.delete(sessionId)
+    }
+  }
+}
 
-      const user = await verifyToken(token)
-      if (!user) {
-        wsManager.sendToClient(ws, {
-          type: 'error',
-          message: 'Invalid or expired token',
-        })
-        ws.close(4002, 'Invalid or expired token')
-        return
-      }
-
-      // Register client
-      wsManager.addClient(ws, user)
-
-      // Send connected confirmation
-      wsManager.sendToClient(ws, { type: 'connected' })
-
-      console.log(`WebSocket connected: user=${user.id}`)
-    },
-
-    onMessage(event: MessageEvent, ws: WSContext) {
-      const client = wsManager.getClient(ws)
-      if (!client) return
-
-      try {
-        const message = JSON.parse(event.data as string) as ClientMessage
-
-        switch (message.type) {
-          case 'subscribe':
-            if (message.sessionId) {
-              wsManager.subscribeToSession(ws, message.sessionId)
-            }
-            break
-
-          case 'unsubscribe':
-            if (message.sessionId) {
-              wsManager.unsubscribeFromSession(ws, message.sessionId)
-            }
-            break
-
-          case 'ping':
-            wsManager.sendToClient(ws, { type: 'pong' })
-            break
-
-          default:
-            console.warn('Unknown WebSocket message type:', message)
-        }
-      } catch (err) {
-        console.error('Error parsing WebSocket message:', err)
-        wsManager.sendToClient(ws, {
-          type: 'error',
-          message: 'Invalid message format',
-        })
-      }
-    },
-
-    onClose(_event: CloseEvent, ws: WSContext) {
-      const client = wsManager.getClient(ws)
-      if (client) {
-        console.log(`WebSocket disconnected: user=${client.user.id}`)
-      }
-      wsManager.removeClient(ws)
-    },
-
-    onError(event: Event, ws: WSContext) {
-      console.error('WebSocket error:', event)
-      wsManager.removeClient(ws)
-    },
+/**
+ * Clean up all subscriptions for a client
+ */
+function cleanupClient(ws: ServerWebSocket<WebSocketData>): void {
+  for (const sessionId of ws.data.subscribedSessions) {
+    unsubscribeFromSession(ws, sessionId)
   }
 }
 
@@ -246,5 +95,99 @@ export const wsHandler = (c: { req: { query: (key: string) => string | undefined
  * Called by SessionManager when events occur
  */
 export function broadcastSessionEvent(sessionId: string, event: SessionEvent): void {
-  wsManager.broadcastSessionEvent(sessionId, event)
+  const subscribers = sessionSubscribers.get(sessionId)
+  if (!subscribers) return
+
+  const message: ServerMessage = {
+    type: 'session_event',
+    sessionId,
+    event,
+  }
+
+  const data = JSON.stringify(message)
+
+  for (const ws of subscribers) {
+    try {
+      ws.send(data)
+    } catch (err) {
+      console.error('Error broadcasting to WebSocket:', err)
+    }
+  }
+}
+
+/**
+ * Create Bun WebSocket handler
+ */
+export function createWebSocketHandler() {
+  return {
+    async open(ws: ServerWebSocket<WebSocketData>) {
+      // Initialize data
+      ws.data.subscribedSessions = new Set()
+
+      // Verify token
+      const token = ws.data.token
+      if (!token) {
+        sendMessage(ws, { type: 'error', message: 'Missing authentication token' })
+        ws.close(4001, 'Missing authentication token')
+        return
+      }
+
+      const user = await verifyToken(token)
+      if (!user) {
+        sendMessage(ws, { type: 'error', message: 'Invalid or expired token' })
+        ws.close(4002, 'Invalid or expired token')
+        return
+      }
+
+      ws.data.user = user
+
+      // Send connected confirmation
+      sendMessage(ws, { type: 'connected' })
+      console.log(`WebSocket connected: user=${user.id}`)
+    },
+
+    message(ws: ServerWebSocket<WebSocketData>, rawMessage: string | Buffer) {
+      if (!ws.data.user) return
+
+      try {
+        const message = JSON.parse(rawMessage.toString()) as ClientMessage
+
+        switch (message.type) {
+          case 'subscribe':
+            if (message.sessionId) {
+              subscribeToSession(ws, message.sessionId)
+            }
+            break
+
+          case 'unsubscribe':
+            if (message.sessionId) {
+              unsubscribeFromSession(ws, message.sessionId)
+            }
+            break
+
+          case 'ping':
+            sendMessage(ws, { type: 'pong' })
+            break
+
+          default:
+            console.warn('Unknown WebSocket message type:', message)
+        }
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err)
+        sendMessage(ws, { type: 'error', message: 'Invalid message format' })
+      }
+    },
+
+    close(ws: ServerWebSocket<WebSocketData>) {
+      if (ws.data.user) {
+        console.log(`WebSocket disconnected: user=${ws.data.user.id}`)
+      }
+      cleanupClient(ws)
+    },
+
+    error(ws: ServerWebSocket<WebSocketData>, error: Error) {
+      console.error('WebSocket error:', error)
+      cleanupClient(ws)
+    },
+  }
 }
