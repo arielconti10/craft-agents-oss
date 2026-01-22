@@ -26,10 +26,31 @@ import {
   LogOut,
   Menu,
   X,
+  Circle,
+  CircleDot,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Inbox,
+  ChevronDown,
 } from 'lucide-react'
 
-// Navigation sections
+// Navigation sections - main sections and sub-sections for statuses
 type NavSection = 'chats' | 'flagged' | 'sources' | 'skills' | 'settings'
+
+// Session status types (matching shared/statuses)
+type SessionStatus = 'backlog' | 'todo' | 'needs-review' | 'done' | 'cancelled'
+
+// Status display config
+const STATUS_CONFIG: Record<SessionStatus, { label: string; icon: React.ReactNode; colorClass: string }> = {
+  'backlog': { label: 'Backlog', icon: <Inbox className="w-4 h-4" />, colorClass: 'text-foreground-50' },
+  'todo': { label: 'Todo', icon: <Circle className="w-4 h-4" />, colorClass: 'text-foreground' },
+  'needs-review': { label: 'Needs Review', icon: <CircleDot className="w-4 h-4" />, colorClass: 'text-info' },
+  'done': { label: 'Done', icon: <CheckCircle className="w-4 h-4" />, colorClass: 'text-accent' },
+  'cancelled': { label: 'Cancelled', icon: <XCircle className="w-4 h-4" />, colorClass: 'text-foreground-50' },
+}
+
+const STATUS_ORDER: SessionStatus[] = ['backlog', 'todo', 'needs-review', 'done', 'cancelled']
 
 export function App() {
   const { isAuthenticated, isLoading } = useAuth()
@@ -65,6 +86,8 @@ function MainApp() {
 
   // Navigation state
   const [activeSection, setActiveSection] = useState<NavSection>('chats')
+  const [selectedStatus, setSelectedStatus] = useState<SessionStatus | 'all'>('all')
+  const [isStatusExpanded, setIsStatusExpanded] = useState(true)
 
   // Mobile UI state
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
@@ -217,6 +240,17 @@ function MainApp() {
   // Filter flagged sessions
   const flaggedSessions = sessions.filter(s => s.isFlagged)
 
+  // Filter sessions by status
+  const filteredSessions = selectedStatus === 'all'
+    ? sessions
+    : sessions.filter(s => (s.todoState || 'backlog') === selectedStatus)
+
+  // Group sessions by status for counts
+  const sessionCounts = STATUS_ORDER.reduce((acc, status) => {
+    acc[status] = sessions.filter(s => (s.todoState || 'backlog') === status).length
+    return acc
+  }, {} as Record<SessionStatus, number>)
+
   // Check if we should show the detail view
   const hasDetailView = (activeSection === 'chats' || activeSection === 'flagged') && selectedSession
     || activeSection === 'sources' && selectedSource
@@ -255,16 +289,53 @@ function MainApp() {
       )}
 
       {/* Mobile navigation drawer */}
-      <div className={`md:hidden fixed top-14 right-0 bottom-0 w-64 bg-foreground-2 z-50 transform transition-transform duration-200 ease-out ${
+      <div className={`md:hidden fixed top-14 right-0 bottom-0 w-64 bg-foreground-2 z-50 transform transition-transform duration-200 ease-out overflow-y-auto ${
         isMobileNavOpen ? 'translate-x-0' : 'translate-x-full'
       }`}>
         <nav className="p-4 space-y-1">
-          <MobileNavButton
-            icon={<MessageSquare className="w-5 h-5" />}
-            label="All Chats"
-            isActive={activeSection === 'chats'}
-            onClick={() => handleSectionChange('chats')}
-          />
+          {/* All Chats with expandable status list */}
+          <div>
+            <button
+              onClick={() => {
+                handleSectionChange('chats')
+                setSelectedStatus('all')
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                activeSection === 'chats' && selectedStatus === 'all'
+                  ? 'bg-accent text-white'
+                  : 'text-foreground hover:bg-foreground/5'
+              }`}
+            >
+              <MessageSquare className="w-5 h-5" />
+              <span className="flex-1 text-left font-medium">All Chats</span>
+              <span className="text-xs opacity-70">{sessions.length}</span>
+            </button>
+
+            {/* Status categories */}
+            <div className="ml-6 mt-1 space-y-0.5">
+              {STATUS_ORDER.map(status => (
+                <button
+                  key={status}
+                  onClick={() => {
+                    handleSectionChange('chats')
+                    setSelectedStatus(status)
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    activeSection === 'chats' && selectedStatus === status
+                      ? 'bg-accent text-white'
+                      : `${STATUS_CONFIG[status].colorClass} hover:bg-foreground/5`
+                  }`}
+                >
+                  {STATUS_CONFIG[status].icon}
+                  <span className="flex-1 text-left">{STATUS_CONFIG[status].label}</span>
+                  {sessionCounts[status] > 0 && (
+                    <span className="text-xs opacity-70">{sessionCounts[status]}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <MobileNavButton
             icon={<Flag className="w-5 h-5" />}
             label="Flagged"
@@ -358,17 +429,61 @@ function MainApp() {
       } md:flex w-full md:w-72 flex-col bg-foreground-2 md:shadow-middle shrink-0`}>
         {/* Section header */}
         <div className="p-4 border-b border-foreground/5">
-          <h2 className="text-base font-semibold text-foreground capitalize">
-            {activeSection === 'flagged' ? 'Flagged Chats' : activeSection}
+          <h2 className="text-base font-semibold text-foreground capitalize flex items-center gap-2">
+            {activeSection === 'chats' && selectedStatus !== 'all' ? (
+              <>
+                {STATUS_CONFIG[selectedStatus].icon}
+                {STATUS_CONFIG[selectedStatus].label}
+              </>
+            ) : activeSection === 'flagged' ? (
+              'Flagged Chats'
+            ) : (
+              activeSection
+            )}
           </h2>
           <p className="text-xs text-foreground-50 mt-0.5">
-            {activeSection === 'chats' && `${sessions.length} conversations`}
+            {activeSection === 'chats' && (selectedStatus === 'all'
+              ? `${sessions.length} conversations`
+              : `${filteredSessions.length} in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`
+            )}
             {activeSection === 'flagged' && `${flaggedSessions.length} flagged`}
             {activeSection === 'sources' && `${sources.length} sources`}
             {activeSection === 'skills' && `${skills.length} skills`}
             {activeSection === 'settings' && 'Workspace settings'}
           </p>
         </div>
+
+        {/* Status filter bar - desktop only, when in chats section */}
+        {activeSection === 'chats' && (
+          <div className="hidden md:block px-3 py-2 border-b border-foreground/5">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setSelectedStatus('all')}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  selectedStatus === 'all'
+                    ? 'bg-accent text-white'
+                    : 'text-foreground-50 hover:bg-foreground/5'
+                }`}
+              >
+                All
+              </button>
+              {STATUS_ORDER.map(status => (
+                <button
+                  key={status}
+                  onClick={() => setSelectedStatus(status)}
+                  title={STATUS_CONFIG[status].label}
+                  className={`p-1.5 rounded transition-colors ${
+                    selectedStatus === status
+                      ? 'bg-accent text-white'
+                      : `${STATUS_CONFIG[status].colorClass} hover:bg-foreground/5`
+                  }`}
+                >
+                  {React.cloneElement(STATUS_CONFIG[status].icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Action button (for chats) */}
         {(activeSection === 'chats' || activeSection === 'flagged') && (
@@ -388,10 +503,11 @@ function MainApp() {
           {/* Chats list */}
           {activeSection === 'chats' && (
             <SessionList
-              sessions={sessions}
+              sessions={filteredSessions}
               selectedSession={selectedSession}
               isLoading={isLoadingSessions}
               onSelect={handleSelectSession}
+              emptyMessage={selectedStatus === 'all' ? 'No sessions yet' : `No sessions in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`}
             />
           )}
 
@@ -571,36 +687,46 @@ function SessionList({
 
   return (
     <ul className="px-2 py-1">
-      {sessions.map((session) => (
-        <li key={session.id}>
-          <button
-            onClick={() => onSelect(session)}
-            className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
-              selectedSession?.id === session.id
-                ? 'bg-accent text-white'
-                : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              {session.isFlagged && (
-                <Flag className={`w-3 h-3 shrink-0 ${
-                  selectedSession?.id === session.id ? 'text-white' : 'text-accent'
-                }`} />
+      {sessions.map((session) => {
+        const status = (session.todoState || 'backlog') as SessionStatus
+        const statusConfig = STATUS_CONFIG[status]
+        return (
+          <li key={session.id}>
+            <button
+              onClick={() => onSelect(session)}
+              className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
+                selectedSession?.id === session.id
+                  ? 'bg-accent text-white'
+                  : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {/* Status indicator */}
+                <span className={`shrink-0 ${
+                  selectedSession?.id === session.id ? 'text-white' : statusConfig.colorClass
+                }`}>
+                  {React.cloneElement(statusConfig.icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
+                </span>
+                <span className="font-medium truncate text-sm flex-1">
+                  {session.name || 'New Chat'}
+                </span>
+                {session.isFlagged && (
+                  <Flag className={`w-3 h-3 shrink-0 ${
+                    selectedSession?.id === session.id ? 'text-white' : 'text-accent'
+                  }`} />
+                )}
+              </div>
+              {session.preview && (
+                <p className={`text-xs truncate mt-0.5 ml-5.5 ${
+                  selectedSession?.id === session.id ? 'text-white/70' : 'text-foreground-50'
+                }`}>
+                  {session.preview}
+                </p>
               )}
-              <span className="font-medium truncate text-sm">
-                {session.name || 'New Chat'}
-              </span>
-            </div>
-            {session.preview && (
-              <p className={`text-xs truncate mt-0.5 ${
-                selectedSession?.id === session.id ? 'text-white/70' : 'text-foreground-50'
-              }`}>
-                {session.preview}
-              </p>
-            )}
-          </button>
-        </li>
-      ))}
+            </button>
+          </li>
+        )
+      })}
     </ul>
   )
 }
