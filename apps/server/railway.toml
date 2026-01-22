@@ -7,8 +7,11 @@ nixPkgs = ["...", "bun"]
 [build.nixpacksPlan.phases.install]
 cmds = ["bun install"]
 
+[build.nixpacksPlan.phases.build]
+cmds = ["bun run server:build"]
+
 [deploy]
-startCommand = "bun run src/index.ts"
+startCommand = "bun run apps/server/src/index.ts"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"

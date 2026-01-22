@@ -1,0 +1,35 @@
+# Railway configuration for Craft Agents monorepo
+# Each service should use this root directory and set appropriate build/start commands in Railway UI
+# Or create separate services with the specific commands below
+
+[build]
+builder = "nixpacks"
+
+[build.nixpacksPlan.phases.setup]
+nixPkgs = ["...", "bun"]
+
+[build.nixpacksPlan.phases.install]
+cmds = ["bun install"]
+
+# Default deploy settings - override per service in Railway UI
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Service-specific commands (set these in Railway service settings):
+#
+# SERVER SERVICE:
+#   Build command: bun run server:build
+#   Start command: bun run apps/server/src/index.ts
+#   Healthcheck: /health
+#
+# WEB SERVICE:
+#   Build command: bun run web:build
+#   Start command: bun run web:preview --host 0.0.0.0 --port ${PORT:-3000}
+#   Healthcheck: (none needed - static files)
+#
+# VIEWER SERVICE:
+#   Build command: bun run viewer:build
+#   Start command: bun run viewer:preview --host 0.0.0.0 --port ${PORT:-3000}
