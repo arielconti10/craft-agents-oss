@@ -2,27 +2,45 @@
  * Chat Page
  *
  * Displays a chat session with message history and input.
+ * Styled to match the Electron app's design.
  */
 
 import React, { useState, useRef, useEffect } from 'react'
 import { usePlatformAPI } from '../contexts/PlatformContext'
 import type { Session, SessionEvent } from '@craft-agent/shared/platform'
+import { Spinner, Markdown } from '@craft-agent/ui'
 
 interface ChatPageProps {
   session: Session
+  onSessionUpdate?: (session: Session) => void
 }
 
-export function ChatPage({ session }: ChatPageProps) {
+export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   const api = usePlatformAPI()
   const [input, setInput] = useState('')
   const [isProcessing, setIsProcessing] = useState(session.isProcessing)
   const [streamingText, setStreamingText] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Reset state when session changes
+  useEffect(() => {
+    setIsProcessing(session.isProcessing || false)
+    setStreamingText('')
+  }, [session.id, session.isProcessing])
 
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [session.messages, streamingText])
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
+    }
+  }, [input])
 
   // Subscribe to session events for streaming
   useEffect(() => {
@@ -41,6 +59,12 @@ export function ChatPage({ session }: ChatPageProps) {
         case 'complete':
           setIsProcessing(false)
           setStreamingText('')
+          // Refresh session to get updated messages
+          api.getSessionMessages(session.id).then(updated => {
+            if (updated && onSessionUpdate) {
+              onSessionUpdate(updated)
+            }
+          })
           break
 
         case 'error':
@@ -57,7 +81,7 @@ export function ChatPage({ session }: ChatPageProps) {
     })
 
     return cleanup
-  }, [api, session.id])
+  }, [api, session.id, onSessionUpdate])
 
   // Send message
   const handleSend = async () => {
@@ -94,83 +118,110 @@ export function ChatPage({ session }: ChatPageProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-foreground-1.5">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--color-border)]">
-        <h2 className="font-semibold">{session.name || 'New Chat'}</h2>
-        <p className="text-sm text-[var(--color-muted)]">
+      <div className="shrink-0 px-6 py-4 border-b border-foreground/5 bg-background/50">
+        <h2 className="font-semibold text-foreground">{session.name || 'New Chat'}</h2>
+        <p className="text-sm text-foreground-50">
           {session.messages.length} messages
-          {session.permissionMode && ` | Mode: ${session.permissionMode}`}
+          {session.permissionMode && (
+            <span className="ml-2 px-2 py-0.5 rounded text-xs bg-foreground/5">
+              {session.permissionMode}
+            </span>
+          )}
         </p>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {session.messages.length === 0 && !streamingText ? (
-          <div className="text-center text-[var(--color-muted)] py-8">
-            <p>Start a conversation by typing a message below.</p>
-          </div>
-        ) : (
-          <>
-            {session.messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))}
+      {/* Messages area with gradient fade */}
+      <div
+        className="flex-1 min-h-0 overflow-y-auto"
+        style={{
+          maskImage: 'linear-gradient(to bottom, transparent 0%, black 32px, black calc(100% - 32px), transparent 100%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 32px, black calc(100% - 32px), transparent 100%)'
+        }}
+      >
+        <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+          {session.messages.length === 0 && !streamingText ? (
+            <div className="text-center text-foreground-40 py-16">
+              <p className="text-lg mb-2">Start a conversation</p>
+              <p className="text-sm">Type a message below to begin chatting with Claude.</p>
+            </div>
+          ) : (
+            <>
+              {session.messages.map((message) => (
+                <MessageBubble key={message.id} message={message} />
+              ))}
 
-            {/* Streaming response */}
-            {streamingText && (
-              <div className="flex justify-start">
-                <div className="max-w-[80%] px-4 py-2 rounded-lg bg-[var(--color-border)]">
-                  <div className="text-xs text-[var(--color-muted)] mb-1">Assistant</div>
-                  <div className="whitespace-pre-wrap">{streamingText}</div>
-                  <div className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
-                </div>
-              </div>
-            )}
-
-            {/* Processing indicator */}
-            {isProcessing && !streamingText && (
-              <div className="flex justify-start">
-                <div className="px-4 py-2 rounded-lg bg-[var(--color-border)]">
-                  <div className="flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
-                    <span className="text-[var(--color-muted)]">Thinking...</span>
+              {/* Streaming response */}
+              {streamingText && (
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+                    <span className="text-accent text-sm font-medium">C</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-foreground-50 mb-1">Claude</div>
+                    <div className="prose prose-sm dark:prose-invert max-w-none text-foreground">
+                      <Markdown content={streamingText} />
+                      <span className="inline-block w-2 h-4 bg-accent/50 animate-pulse ml-1" />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </>
-        )}
-        <div ref={messagesEndRef} />
+              )}
+
+              {/* Processing indicator */}
+              {isProcessing && !streamingText && (
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+                    <span className="text-accent text-sm font-medium">C</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-foreground-50">
+                    <Spinner className="text-base" />
+                    <span>Thinking...</span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Input */}
-      <div className="p-4 border-t border-[var(--color-border)]">
-        <div className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
-            className="flex-1 px-4 py-2 border border-[var(--color-border)] rounded-lg bg-transparent resize-none focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
-            rows={1}
-            disabled={isProcessing}
-          />
-          {isProcessing ? (
-            <button
-              onClick={handleCancel}
-              className="px-4 py-2 bg-[var(--color-destructive)] text-white rounded-lg hover:opacity-90 transition-opacity"
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="px-4 py-2 bg-[var(--color-accent)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
-            >
-              Send
-            </button>
-          )}
+      {/* Input area */}
+      <div className="shrink-0 p-4 bg-background/50 border-t border-foreground/5">
+        <div className="max-w-3xl mx-auto">
+          <div className="flex gap-3 items-end">
+            <div className="flex-1 relative">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Message Claude..."
+                className="w-full px-4 py-3 rounded-xl bg-foreground/5 border border-foreground/10 text-foreground placeholder:text-foreground-30 resize-none focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent/50 transition-colors"
+                rows={1}
+                disabled={isProcessing}
+              />
+            </div>
+            {isProcessing ? (
+              <button
+                onClick={handleCancel}
+                className="px-5 py-3 bg-destructive text-white rounded-xl font-medium hover:opacity-90 transition-opacity shadow-minimal"
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="px-5 py-3 bg-accent text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity shadow-minimal"
+              >
+                Send
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-foreground-30 mt-2 text-center">
+            Press Enter to send, Shift+Enter for new line
+          </p>
         </div>
       </div>
     </div>
@@ -178,24 +229,31 @@ export function ChatPage({ session }: ChatPageProps) {
 }
 
 /**
- * Message bubble component
+ * Message bubble component with proper styling
  */
 function MessageBubble({ message }: { message: { id: string; role: string; content: string } }) {
   const isUser = message.role === 'user'
 
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[80%] px-4 py-2 rounded-lg ${
-          isUser
-            ? 'bg-[var(--color-accent)] text-white'
-            : 'bg-[var(--color-border)]'
-        }`}
-      >
-        <div className="text-xs opacity-70 mb-1">
-          {isUser ? 'You' : 'Assistant'}
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-br-md bg-accent text-white shadow-minimal">
+          <div className="whitespace-pre-wrap break-words">{message.content}</div>
         </div>
-        <div className="whitespace-pre-wrap">{message.content}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex gap-3">
+      <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+        <span className="text-accent text-sm font-medium">C</span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-foreground-50 mb-1">Claude</div>
+        <div className="prose prose-sm dark:prose-invert max-w-none text-foreground">
+          <Markdown content={message.content} />
+        </div>
       </div>
     </div>
   )
