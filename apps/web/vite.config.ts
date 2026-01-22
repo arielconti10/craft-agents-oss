@@ -20,6 +20,9 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    allowedHosts: ['localhost', '.railway.app'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
