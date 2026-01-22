@@ -10,6 +10,9 @@ import React, { createContext, useContext, useMemo, useEffect, useState, useCall
 import type { PlatformAPI, PlatformCapabilities, PlatformContext as IPlatformContext } from '@craft-agent/shared/platform'
 import { WebPlatformAPI, webCapabilities } from '@craft-agent/shared/platform/web'
 
+// API base URL - uses environment variable in production, /api proxy in development
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
 // Create context
 const PlatformContext = createContext<IPlatformContext | null>(null)
 
@@ -42,7 +45,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   // Create platform API instance
   const api = useMemo(() => {
     const webApi = new WebPlatformAPI({
-      baseUrl: '/api',
+      baseUrl: API_BASE_URL,
     })
     // Set token if available
     if (token) {
@@ -81,7 +84,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
   // Login function
   const login = useCallback(async (apiKey: string) => {
-    const response = await fetch('/api/auth/login', {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey }),

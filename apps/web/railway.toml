@@ -1,0 +1,14 @@
+[build]
+builder = "nixpacks"
+
+[build.nixpacksPlan.phases.setup]
+nixPkgs = ["...", "bun"]
+
+[build.nixpacksPlan.phases.install]
+cmds = ["bun install"]
+
+[build.nixpacksPlan.phases.build]
+cmds = ["bun run web:build"]
+
+[deploy]
+startCommand = "bun run web:preview --host 0.0.0.0 --port ${PORT:-3000}"
