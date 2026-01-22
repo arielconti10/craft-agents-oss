@@ -3,6 +3,7 @@
  *
  * Displays a chat session using shared UI components from @craft-agent/ui.
  * Uses SessionViewer for proper turn-based display with tool activities.
+ * Supports inline overlays for code, terminal, and diff previews.
  */
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
@@ -13,7 +14,13 @@ import {
   SessionViewer,
   Spinner,
   PlatformProvider,
+  CodePreviewOverlay,
+  TerminalPreviewOverlay,
+  DiffPreviewOverlay,
+  DocumentFormattedMarkdownOverlay,
+  CHAT_LAYOUT,
   type PlatformActions,
+  type ActivityItem,
 } from '@craft-agent/ui'
 
 interface ChatPageProps {
@@ -23,11 +30,12 @@ interface ChatPageProps {
 
 /**
  * Convert Message to StoredMessage format for SessionViewer
+ * Maps `role` → `type` as expected by StoredMessage
  */
 function messageToStoredMessage(msg: Message): StoredMessage {
   return {
     id: msg.id,
-    type: msg.role,
+    type: msg.role, // Key difference: StoredMessage uses `type`, Message uses `role`
     content: msg.content,
     timestamp: msg.timestamp,
     toolName: msg.toolName,
@@ -94,6 +102,19 @@ function sessionToStoredSession(session: Session): StoredSession {
   }
 }
 
+// Overlay state types
+type OverlayType = 'code' | 'terminal' | 'markdown' | null
+
+interface OverlayState {
+  type: OverlayType
+  // For code overlay
+  content?: string
+  filePath?: string
+  // For terminal overlay
+  command?: string
+  output?: string
+}
+
 export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   const api = usePlatformAPI()
   const [input, setInput] = useState('')
@@ -101,10 +122,14 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   const [streamingMessages, setStreamingMessages] = useState<Message[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Overlay state for inline previews
+  const [overlay, setOverlay] = useState<OverlayState>({ type: null })
+
   // Reset state when session changes
   useEffect(() => {
     setIsProcessing(session.isProcessing || false)
     setStreamingMessages([])
+    setOverlay({ type: null })
   }, [session.id, session.isProcessing])
 
   // Auto-resize textarea
@@ -128,7 +153,6 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           streamingText += event.delta
           currentTurnId = event.turnId
           setStreamingMessages(prev => {
-            // Update or create streaming message
             const existing = prev.find(m => m.turnId === currentTurnId && m.role === 'assistant')
             if (existing) {
               return prev.map(m =>
@@ -185,7 +209,6 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
         case 'complete':
           setIsProcessing(false)
           setStreamingMessages([])
-          // Refresh session to get updated messages
           api.getSessionMessages(session.id).then(updated => {
             if (updated && onSessionUpdate) {
               onSessionUpdate(updated)
@@ -222,7 +245,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   }, [session, streamingMessages])
 
   // Send message
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!input.trim() || isProcessing) return
 
     const message = input.trim()
@@ -230,7 +253,6 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     setIsProcessing(true)
     setStreamingMessages([])
 
-    // Add optimistic user message
     const optimisticMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -247,36 +269,115 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
       setIsProcessing(false)
       setStreamingMessages([])
     }
-  }
+  }, [api, input, isProcessing, session.id])
 
   // Handle key press
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
-  }
+  }, [handleSend])
 
   // Cancel processing
-  const handleCancel = async () => {
+  const handleCancel = useCallback(async () => {
     try {
       await api.cancelProcessing(session.id)
     } catch (error) {
       console.error('Failed to cancel:', error)
     }
-  }
+  }, [api, session.id])
 
-  // Platform actions for web
+  // Close overlay
+  const handleCloseOverlay = useCallback(() => {
+    setOverlay({ type: null })
+  }, [])
+
+  // Platform actions for web with overlay support
   const platformActions: PlatformActions = useMemo(() => ({
     onOpenUrl: (url: string) => window.open(url, '_blank'),
     onCopyToClipboard: (text: string) => navigator.clipboard.writeText(text),
-    // File opening not available on web - could show inline preview
-    onOpenFile: undefined,
-    // Could implement inline modals for these
-    onOpenCodePreview: undefined,
-    onOpenTerminalPreview: undefined,
-    onOpenMarkdownPreview: undefined,
-  }), [])
+
+    // Open code preview in overlay
+    onOpenCodePreview: (sessionId: string, toolUseId: string) => {
+      // Find the tool result in session messages
+      const msg = session.messages.find(m => m.toolUseId === toolUseId)
+      if (msg?.toolResult) {
+        const input = msg.toolInput as { file_path?: string } | undefined
+        setOverlay({
+          type: 'code',
+          content: String(msg.toolResult),
+          filePath: input?.file_path,
+        })
+      }
+    },
+
+    // Open terminal preview in overlay
+    onOpenTerminalPreview: (sessionId: string, toolUseId: string) => {
+      const msg = session.messages.find(m => m.toolUseId === toolUseId)
+      if (msg?.toolResult) {
+        const input = msg.toolInput as { command?: string } | undefined
+        setOverlay({
+          type: 'terminal',
+          command: input?.command || msg.toolName || 'command',
+          output: String(msg.toolResult),
+        })
+      }
+    },
+
+    // Open markdown preview in overlay
+    onOpenMarkdownPreview: (content: string) => {
+      setOverlay({
+        type: 'markdown',
+        content,
+      })
+    },
+
+    // Activity click handler - show appropriate overlay based on tool type
+    onOpenActivityDetails: (sessionId: string, activityId: string) => {
+      const msg = session.messages.find(m => m.toolUseId === activityId)
+      if (!msg?.toolResult) return
+
+      const toolName = msg.toolName?.toLowerCase() || ''
+      const input = msg.toolInput as { file_path?: string; command?: string } | undefined
+
+      if (toolName === 'read' || toolName === 'write' || toolName === 'edit') {
+        setOverlay({
+          type: 'code',
+          content: String(msg.toolResult),
+          filePath: input?.file_path,
+        })
+      } else if (toolName === 'bash' || toolName === 'grep' || toolName === 'glob') {
+        setOverlay({
+          type: 'terminal',
+          command: input?.command || toolName,
+          output: String(msg.toolResult),
+        })
+      }
+    },
+  }), [session.messages])
+
+  // Handle activity click
+  const handleActivityClick = useCallback((activity: ActivityItem) => {
+    if (!activity.content) return
+
+    const toolName = activity.toolName?.toLowerCase() || ''
+    const toolInput = activity.toolInput as { file_path?: string; command?: string } | undefined
+
+    if (toolName === 'read' || toolName === 'write' || toolName === 'edit') {
+      setOverlay({
+        type: 'code',
+        content: String(activity.content),
+        filePath: toolInput?.file_path,
+      })
+    } else if (toolName === 'bash' || toolName === 'grep' || toolName === 'glob') {
+      setOverlay({
+        type: 'terminal',
+        command: toolInput?.command || toolName,
+        output: String(activity.content),
+      })
+    }
+  }, [])
 
   // Header component
   const header = (
@@ -296,7 +397,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   // Footer component (input area)
   const footer = (
     <div className="p-4 bg-background/50">
-      <div className="max-w-3xl mx-auto">
+      <div className={`${CHAT_LAYOUT.maxWidth} mx-auto`}>
         <div className="flex gap-3 items-end">
           <div className="flex-1 relative">
             <textarea
@@ -352,7 +453,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
 
   return (
     <PlatformProvider actions={platformActions}>
-      <div className="flex flex-col h-full bg-foreground-1.5">
+      <div className="flex flex-col h-full bg-foreground-1.5 relative">
         <SessionViewer
           session={storedSession}
           mode="interactive"
@@ -361,7 +462,37 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           header={header}
           footer={footer}
           sessionFolderPath={session.sessionFolderPath}
+          onActivityClick={handleActivityClick}
         />
+
+        {/* Code preview overlay */}
+        {overlay.type === 'code' && overlay.content && (
+          <CodePreviewOverlay
+            isOpen={true}
+            content={overlay.content}
+            filePath={overlay.filePath || 'output'}
+            onClose={handleCloseOverlay}
+          />
+        )}
+
+        {/* Terminal preview overlay */}
+        {overlay.type === 'terminal' && overlay.output && (
+          <TerminalPreviewOverlay
+            isOpen={true}
+            command={overlay.command || ''}
+            output={overlay.output}
+            onClose={handleCloseOverlay}
+          />
+        )}
+
+        {/* Markdown preview overlay */}
+        {overlay.type === 'markdown' && overlay.content && (
+          <DocumentFormattedMarkdownOverlay
+            isOpen={true}
+            content={overlay.content}
+            onClose={handleCloseOverlay}
+          />
+        )}
       </div>
     </PlatformProvider>
   )
