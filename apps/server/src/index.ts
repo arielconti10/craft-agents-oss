@@ -25,12 +25,19 @@ const app = new Hono()
 // ==========================================
 
 // CORS for web app
+const corsOrigins = [
+  'http://localhost:5175',      // Local web dev
+  'http://localhost:3000',      // Alternative local
+  'https://agents.craft.do',    // Production
+]
+
+// Add custom origin from environment variable
+if (process.env.WEB_URL) {
+  corsOrigins.push(process.env.WEB_URL.replace(/\/$/, ''))
+}
+
 app.use('*', cors({
-  origin: [
-    'http://localhost:5175',      // Local web dev
-    'http://localhost:3000',      // Alternative local
-    'https://agents.craft.do',    // Production
-  ],
+  origin: corsOrigins,
   credentials: true,
 }))
 
