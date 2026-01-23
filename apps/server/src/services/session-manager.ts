@@ -369,6 +369,9 @@ class ServerSessionManager {
       // Current turn ID for grouping events
       let currentTurnId: string | undefined
 
+      // Track if complete event was already sent
+      let completeSent = false
+
       for await (const event of chatIterator) {
         // Log events (skip noisy text_delta)
         if (event.type !== 'text_delta') {
@@ -382,6 +385,7 @@ class ServerSessionManager {
         if (event.type === 'complete') {
           console.log('Chat completed')
           managed.isProcessing = false
+          completeSent = true
 
           // Update token usage
           if (event.usage) {
@@ -448,13 +452,8 @@ class ServerSessionManager {
     } finally {
       managed.isProcessing = false
       managed.abortController = undefined
-
-      // Send complete event
-      this.broadcast(sessionId, {
-        type: 'complete',
-        sessionId,
-        tokenUsage: managed.tokenUsage,
-      } as SessionEvent)
+      // Note: Complete event is sent inside the try block when agent completes normally,
+      // or implicitly after error/interrupted events. We don't send it here to avoid duplicates.
     }
   }
 

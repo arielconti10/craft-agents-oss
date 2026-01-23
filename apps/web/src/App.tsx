@@ -168,7 +168,13 @@ function MainApp() {
           setSelectedSession(null)
         }
       }
-      if ('sessionId' in event && selectedSession?.id === event.sessionId) {
+      // Only refetch session on significant state-changing events
+      // ChatPage handles streaming events (text_delta, tool_start, etc.) internally
+      if (
+        'sessionId' in event &&
+        selectedSession?.id === event.sessionId &&
+        (event.type === 'complete' || event.type === 'error' || event.type === 'interrupted')
+      ) {
         api.getSessionMessages(event.sessionId).then(session => {
           if (session) {
             setSelectedSession(session)
