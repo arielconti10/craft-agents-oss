@@ -1,9 +1,9 @@
 /**
  * Craft Agents Web App
  *
- * Main application component with responsive layout using shadcn/ui sidebar:
+ * Main application component with responsive layout:
  * - Desktop: Sidebar + Navigator Panel + Main Content
- * - Mobile: Sheet-based sidebar with bottom navigation
+ * - Mobile: Popover-based navigation (shadcn/ui v4 pattern)
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
@@ -17,7 +17,6 @@ import { Spinner } from '@craft-agent/ui'
 import {
   SidebarProvider,
   SidebarInset,
-  SidebarTrigger,
   useSidebar,
 } from './components/ui/sidebar'
 import {
@@ -28,13 +27,13 @@ import {
   STATUS_ORDER,
 } from './components/app-sidebar'
 import { SessionMenu, RightSidebar } from './components/app-shell'
+import { MobileNav } from './components/mobile-nav'
 import {
   Plug,
   Wand2,
   Plus,
   ChevronRight,
   ChevronLeft,
-  Menu,
   Flag,
   Circle,
   CircleDot,
@@ -382,6 +381,15 @@ function MainApp() {
           showListPanel={showListPanel}
           hasDetailView={!!hasDetailView}
           onBackToList={handleBackToList}
+          onSectionChange={handleSectionChange}
+          onStatusChange={setSelectedStatus}
+          onNewChat={handleNewSession}
+          onLogout={logout}
+          sessionCount={sessions.length}
+          sessionCounts={sessionCounts}
+          flaggedCount={flaggedSessions.length}
+          sourcesCount={sources.length}
+          skillsCount={skills.length}
         />
 
         {/* Content with navigator panel and detail */}
@@ -464,7 +472,7 @@ function MainApp() {
 }
 
 /**
- * Mobile header with back button and menu trigger
+ * Mobile header with back button and popover menu
  */
 function MobileHeader({
   activeSection,
@@ -472,15 +480,31 @@ function MobileHeader({
   showListPanel,
   hasDetailView,
   onBackToList,
+  onSectionChange,
+  onStatusChange,
+  onNewChat,
+  onLogout,
+  sessionCount,
+  sessionCounts,
+  flaggedCount,
+  sourcesCount,
+  skillsCount,
 }: {
   activeSection: NavSection
   selectedStatus: SessionStatus | 'all'
   showListPanel: boolean
   hasDetailView: boolean
   onBackToList: () => void
+  onSectionChange: (section: NavSection) => void
+  onStatusChange: (status: SessionStatus | 'all') => void
+  onNewChat: () => void
+  onLogout: () => void
+  sessionCount: number
+  sessionCounts: Record<SessionStatus, number>
+  flaggedCount: number
+  sourcesCount: number
+  skillsCount: number
 }) {
-  const { toggleSidebar } = useSidebar()
-
   return (
     <div className="md:hidden flex items-center justify-between p-3 bg-foreground-2 border-b border-foreground/5 shrink-0">
       <div className="flex items-center gap-3">
@@ -495,7 +519,19 @@ function MobileHeader({
         <CraftAgentLogo className="w-7 h-7 text-accent" />
         <span className="font-semibold text-foreground">Craft Agents</span>
       </div>
-      <SidebarTrigger className="p-2 rounded-lg text-foreground-50 hover:bg-foreground/5" />
+      <MobileNav
+        activeSection={activeSection}
+        selectedStatus={selectedStatus}
+        onSectionChange={onSectionChange}
+        onStatusChange={onStatusChange}
+        onNewChat={onNewChat}
+        onLogout={onLogout}
+        sessionCount={sessionCount}
+        sessionCounts={sessionCounts}
+        flaggedCount={flaggedCount}
+        sourcesCount={sourcesCount}
+        skillsCount={skillsCount}
+      />
     </div>
   )
 }
