@@ -315,6 +315,61 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           if (event.model) setCurrentModel(event.model)
           break
 
+        case 'title_generated':
+          // Update session title in parent
+          if (onSessionUpdate && event.title) {
+            onSessionUpdate({ ...session, name: event.title })
+          }
+          break
+
+        case 'session_flagged':
+          // Update session flag status in parent
+          if (onSessionUpdate) {
+            onSessionUpdate({ ...session, isFlagged: true })
+          }
+          break
+
+        case 'session_unflagged':
+          // Update session flag status in parent
+          if (onSessionUpdate) {
+            onSessionUpdate({ ...session, isFlagged: false })
+          }
+          break
+
+        case 'todo_state_changed':
+          // Update session todo state in parent
+          if (onSessionUpdate && event.todoState) {
+            onSessionUpdate({ ...session, todoState: event.todoState })
+          }
+          break
+
+        case 'usage_update':
+          // Update token usage in parent (merge with defaults for required fields)
+          if (onSessionUpdate && event.tokenUsage) {
+            const baseUsage = session.tokenUsage ?? {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              contextTokens: 0,
+              costUsd: 0,
+            }
+            onSessionUpdate({
+              ...session,
+              tokenUsage: {
+                ...baseUsage,
+                inputTokens: event.tokenUsage.inputTokens ?? baseUsage.inputTokens,
+                contextWindow: event.tokenUsage.contextWindow,
+              }
+            })
+          }
+          break
+
+        case 'status':
+        case 'info':
+          // Log status/info messages (could add a toast notification in the future)
+          console.log(`[${event.type}]`, event.message)
+          break
+
         case 'complete':
           setIsProcessing(false)
           setStreamingMessages([])
