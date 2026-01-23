@@ -14,7 +14,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { usePlatformAPI } from '../contexts/PlatformContext'
-import type { Session, SessionEvent, FileAttachment, PermissionMode, PermissionRequest } from '@craft-agent/shared/platform'
+import type { Session, SessionEvent, FileAttachment, PermissionMode, PermissionRequest, CredentialRequest, CredentialResponse } from '@craft-agent/shared/platform'
 import type { StoredSession, StoredMessage, Message } from '@craft-agent/core'
 import { MODELS, getModelShortName, DEFAULT_MODEL } from '@craft-agent/shared/config/models'
 import { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/mode-types'
@@ -43,6 +43,7 @@ import {
 } from 'lucide-react'
 import { useEscapeInterrupt, EscapeInterruptOverlay } from '../hooks/useEscapeInterrupt'
 import { PermissionRequestCard } from '../components/chat/PermissionRequestCard'
+import { CredentialRequestCard } from '../components/chat/CredentialRequestCard'
 
 interface ChatPageProps {
   session: Session
@@ -196,6 +197,10 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
   const [isRespondingToPermission, setIsRespondingToPermission] = useState(false)
 
+  // Credential request state
+  const [pendingCredential, setPendingCredential] = useState<CredentialRequest | null>(null)
+  const [isRespondingToCredential, setIsRespondingToCredential] = useState(false)
+
   // Double-Esc interrupt handler
   const { isWaitingForSecondEsc } = useEscapeInterrupt({
     enabled: isProcessing,
@@ -214,6 +219,8 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     setAttachments([])
     setPendingPermission(null)
     setIsRespondingToPermission(false)
+    setPendingCredential(null)
+    setIsRespondingToCredential(false)
   }, [session.id, session.isProcessing, session.permissionMode, session.model])
 
   // Auto-resize textarea
@@ -299,6 +306,11 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setPendingPermission(event.request)
           break
 
+        case 'credential_request':
+          // Show credential request UI
+          setPendingCredential(event.request)
+          break
+
         case 'session_model_changed':
           if (event.model) setCurrentModel(event.model)
           break
@@ -308,6 +320,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setStreamingMessages([])
           setAttachments([])
           setPendingPermission(null)
+          setPendingCredential(null)
           api.getSessionMessages(session.id).then(updated => {
             if (updated && onSessionUpdate) {
               onSessionUpdate(updated)
@@ -319,6 +332,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setIsProcessing(false)
           setStreamingMessages([])
           setPendingPermission(null)
+          setPendingCredential(null)
           console.error('Session error:', event.error)
           break
 
@@ -326,6 +340,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setIsProcessing(false)
           setStreamingMessages([])
           setPendingPermission(null)
+          setPendingCredential(null)
           break
       }
     })
@@ -425,6 +440,35 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   const handlePermissionDeny = useCallback(() => {
     handlePermissionResponse(false, false)
   }, [handlePermissionResponse])
+
+  // Handle credential response
+  const handleCredentialSubmit = useCallback(async (response: CredentialResponse) => {
+    if (!pendingCredential) return
+
+    setIsRespondingToCredential(true)
+    try {
+      await api.respondToCredential(
+        session.id,
+        pendingCredential.requestId,
+        response
+      )
+      setPendingCredential(null)
+    } catch (error) {
+      console.error('Failed to respond to credential:', error)
+    } finally {
+      setIsRespondingToCredential(false)
+    }
+  }, [api, session.id, pendingCredential])
+
+  const handleCredentialCancel = useCallback(() => {
+    if (!pendingCredential) return
+
+    // Send cancelled response
+    handleCredentialSubmit({
+      type: 'credential',
+      cancelled: true,
+    })
+  }, [pendingCredential, handleCredentialSubmit])
 
   // Handle permission mode change
   const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -638,6 +682,20 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
               onAlwaysAllow={handlePermissionAlwaysAllow}
               onDeny={handlePermissionDeny}
               isResponding={isRespondingToPermission}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Credential request card */}
+      {pendingCredential && (
+        <div className="px-4 md:px-6 py-3 border-b border-foreground/5">
+          <div className={`${CHAT_LAYOUT.maxWidth} mx-auto`}>
+            <CredentialRequestCard
+              request={pendingCredential}
+              onSubmit={handleCredentialSubmit}
+              onCancel={handleCredentialCancel}
+              isSubmitting={isRespondingToCredential}
             />
           </div>
         </div>
