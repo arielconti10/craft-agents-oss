@@ -8,6 +8,8 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
+import { join } from 'path'
+import { existsSync } from 'fs'
 
 import { authRoutes } from './routes/auth'
 import { sessionsRoutes } from './routes/sessions'
@@ -17,6 +19,37 @@ import { themesRoutes } from './routes/themes'
 import { createWebSocketHandler } from './ws/handler'
 import { authMiddleware } from './middleware/auth'
 import { getSessionManager } from './services/session-manager'
+import { setPathToClaudeCodeExecutable } from '@craft-agent/shared/agent'
+
+// ==========================================
+// Configure Claude Agent SDK Path
+// ==========================================
+
+// Find the Claude Agent SDK CLI path
+const possiblePaths = [
+  // Development: in node_modules
+  join(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'),
+  // Alternative: relative to this file
+  join(__dirname, '..', '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'),
+  // Docker/production: might be in a different location
+  '/app/node_modules/@anthropic-ai/claude-agent-sdk/cli.js',
+]
+
+let cliPath: string | null = null
+for (const path of possiblePaths) {
+  if (existsSync(path)) {
+    cliPath = path
+    break
+  }
+}
+
+if (cliPath) {
+  console.log(`Found Claude Agent SDK CLI at: ${cliPath}`)
+  setPathToClaudeCodeExecutable(cliPath)
+} else {
+  console.warn('Claude Agent SDK CLI not found. Agent functionality may not work.')
+  console.warn('Searched paths:', possiblePaths)
+}
 
 // Create Hono app
 const app = new Hono()
@@ -132,8 +165,8 @@ export default {
   fetch(req: Request, server: unknown) {
     const url = new URL(req.url)
 
-    // Handle WebSocket upgrade for /ws endpoint
-    if (url.pathname === '/ws') {
+    // Handle WebSocket upgrade for /ws or /api/ws endpoint
+    if (url.pathname === '/ws' || url.pathname === '/api/ws') {
       // Get token from query string
       const token = url.searchParams.get('token')
 
