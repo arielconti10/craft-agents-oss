@@ -1,9 +1,9 @@
 /**
  * Craft Agents Web App
  *
- * Main application component with responsive layout:
- * - Desktop: 3-panel layout (nav sidebar, list panel, content)
- * - Mobile: Single panel with bottom navigation and slide-out drawer
+ * Main application component with responsive layout using shadcn/ui sidebar:
+ * - Desktop: Sidebar + Navigator Panel + Main Content
+ * - Mobile: Sheet-based sidebar with bottom navigation
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
@@ -15,42 +15,32 @@ import type { LoadedSource } from '@craft-agent/shared/sources/types'
 import type { LoadedSkill } from '@craft-agent/shared/skills/types'
 import { Spinner } from '@craft-agent/ui'
 import {
-  MessageSquare,
+  SidebarProvider,
+  SidebarInset,
+  SidebarTrigger,
+  useSidebar,
+} from './components/ui/sidebar'
+import {
+  AppSidebar,
+  type NavSection,
+  type SessionStatus,
+  STATUS_CONFIG,
+  STATUS_ORDER,
+} from './components/app-sidebar'
+import {
   Plug,
   Wand2,
-  Settings,
-  Flag,
   Plus,
   ChevronRight,
   ChevronLeft,
-  LogOut,
   Menu,
-  X,
+  Flag,
   Circle,
   CircleDot,
-  Clock,
   CheckCircle,
   XCircle,
   Inbox,
-  ChevronDown,
 } from 'lucide-react'
-
-// Navigation sections - main sections and sub-sections for statuses
-type NavSection = 'chats' | 'flagged' | 'sources' | 'skills' | 'settings'
-
-// Session status types (matching shared/statuses)
-type SessionStatus = 'backlog' | 'todo' | 'needs-review' | 'done' | 'cancelled'
-
-// Status display config
-const STATUS_CONFIG: Record<SessionStatus, { label: string; icon: React.ReactNode; colorClass: string }> = {
-  'backlog': { label: 'Backlog', icon: <Inbox className="w-4 h-4" />, colorClass: 'text-foreground-50' },
-  'todo': { label: 'Todo', icon: <Circle className="w-4 h-4" />, colorClass: 'text-foreground' },
-  'needs-review': { label: 'Needs Review', icon: <CircleDot className="w-4 h-4" />, colorClass: 'text-info' },
-  'done': { label: 'Done', icon: <CheckCircle className="w-4 h-4" />, colorClass: 'text-accent' },
-  'cancelled': { label: 'Cancelled', icon: <XCircle className="w-4 h-4" />, colorClass: 'text-foreground-50' },
-}
-
-const STATUS_ORDER: SessionStatus[] = ['backlog', 'todo', 'needs-review', 'done', 'cancelled']
 
 export function App() {
   const { isAuthenticated, isLoading } = useAuth()
@@ -73,7 +63,11 @@ export function App() {
   }
 
   // Show main app
-  return <MainApp />
+  return (
+    <SidebarProvider>
+      <MainApp />
+    </SidebarProvider>
+  )
 }
 
 /**
@@ -83,14 +77,13 @@ function MainApp() {
   const api = usePlatformAPI()
   const capabilities = usePlatformCapabilities()
   const { logout } = useAuth()
+  const { isMobile, setOpenMobile } = useSidebar()
 
   // Navigation state
   const [activeSection, setActiveSection] = useState<NavSection>('chats')
   const [selectedStatus, setSelectedStatus] = useState<SessionStatus | 'all'>('all')
-  const [isStatusExpanded, setIsStatusExpanded] = useState(true)
 
   // Mobile UI state
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
   const [showListPanel, setShowListPanel] = useState(true)
 
   // Sessions state
@@ -203,7 +196,7 @@ function MainApp() {
       setSelectedSession(session)
       setActiveSection('chats')
       setShowListPanel(false) // Show chat on mobile
-      setIsMobileNavOpen(false)
+      setOpenMobile(false)
     } catch (error) {
       console.error('Failed to create session:', error)
     }
@@ -214,7 +207,7 @@ function MainApp() {
     const fullSession = await api.getSessionMessages(session.id)
     setSelectedSession(fullSession)
     setShowListPanel(false) // Show chat on mobile
-    setIsMobileNavOpen(false)
+    setOpenMobile(false)
   }
 
   // Update session in list after changes
@@ -229,7 +222,7 @@ function MainApp() {
   const handleSectionChange = (section: NavSection) => {
     setActiveSection(section)
     setShowListPanel(true)
-    setIsMobileNavOpen(false)
+    setOpenMobile(false)
   }
 
   // Handle back button on mobile
@@ -256,404 +249,304 @@ function MainApp() {
     || activeSection === 'sources' && selectedSource
     || activeSection === 'settings'
 
+  // Platform info string
+  const platformInfo = `${capabilities.canRunLocalMcp ? 'Local MCP' : 'Remote MCP'} • ${capabilities.hasMultiWindow ? 'Multi-window' : 'Single-window'}`
+
   return (
-    <div className="h-screen bg-background flex flex-col md:flex-row overflow-hidden">
-      {/* Mobile header */}
-      <div className="md:hidden flex items-center justify-between p-3 bg-foreground-2 border-b border-foreground/5 shrink-0">
-        <div className="flex items-center gap-3">
-          {!showListPanel && hasDetailView && (
-            <button
-              onClick={handleBackToList}
-              className="p-2 -ml-2 rounded-lg text-foreground-50 hover:bg-foreground/5"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-          )}
-          <CraftAgentLogo className="w-7 h-7 text-accent" />
-          <span className="font-semibold text-foreground">Craft Agents</span>
-        </div>
-        <button
-          onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
-          className="p-2 rounded-lg text-foreground-50 hover:bg-foreground/5"
-        >
-          {isMobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
+    <>
+      {/* Sidebar with navigation */}
+      <AppSidebar
+        activeSection={activeSection}
+        selectedStatus={selectedStatus}
+        onSectionChange={handleSectionChange}
+        onStatusChange={setSelectedStatus}
+        onNewChat={handleNewSession}
+        onLogout={logout}
+        sessionCount={sessions.length}
+        sessionCounts={sessionCounts}
+        flaggedCount={flaggedSessions.length}
+        sourcesCount={sources.length}
+        skillsCount={skills.length}
+        platformInfo={platformInfo}
+      />
 
-      {/* Mobile navigation overlay */}
-      {isMobileNavOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-40 bg-black/50"
-          onClick={() => setIsMobileNavOpen(false)}
+      {/* Main content area */}
+      <SidebarInset className="flex-col">
+        {/* Mobile header */}
+        <MobileHeader
+          activeSection={activeSection}
+          selectedStatus={selectedStatus}
+          showListPanel={showListPanel}
+          hasDetailView={!!hasDetailView}
+          onBackToList={handleBackToList}
         />
-      )}
 
-      {/* Mobile navigation drawer */}
-      <div className={`md:hidden fixed top-14 right-0 bottom-0 w-64 bg-foreground-2 z-50 transform transition-transform duration-200 ease-out overflow-y-auto ${
-        isMobileNavOpen ? 'translate-x-0' : 'translate-x-full'
-      }`}>
-        <nav className="p-4 space-y-1">
-          {/* All Chats with expandable status list */}
-          <div>
-            <button
-              onClick={() => {
-                handleSectionChange('chats')
-                setSelectedStatus('all')
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                activeSection === 'chats' && selectedStatus === 'all'
-                  ? 'bg-accent text-white'
-                  : 'text-foreground hover:bg-foreground/5'
-              }`}
-            >
-              <MessageSquare className="w-5 h-5" />
-              <span className="flex-1 text-left font-medium">All Chats</span>
-              <span className="text-xs opacity-70">{sessions.length}</span>
-            </button>
+        {/* Content with navigator panel and detail */}
+        <div className="flex flex-1 min-h-0">
+          {/* Navigator Panel - List view */}
+          <NavigatorPanel
+            activeSection={activeSection}
+            selectedStatus={selectedStatus}
+            showListPanel={showListPanel}
+            filteredSessions={filteredSessions}
+            flaggedSessions={flaggedSessions}
+            selectedSession={selectedSession}
+            isLoadingSessions={isLoadingSessions}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSession}
+            onStatusChange={setSelectedStatus}
+            sessionCounts={sessionCounts}
+            sources={sources}
+            selectedSource={selectedSource}
+            isLoadingSources={isLoadingSources}
+            onSelectSource={(source) => {
+              setSelectedSource(source)
+              setShowListPanel(false)
+            }}
+            skills={skills}
+            isLoadingSkills={isLoadingSkills}
+            onSettingsSelect={() => setShowListPanel(false)}
+            platformInfo={platformInfo}
+          />
 
-            {/* Status categories */}
-            <div className="ml-6 mt-1 space-y-0.5">
-              {STATUS_ORDER.map(status => (
-                <button
-                  key={status}
-                  onClick={() => {
-                    handleSectionChange('chats')
-                    setSelectedStatus(status)
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    activeSection === 'chats' && selectedStatus === status
-                      ? 'bg-accent text-white'
-                      : `${STATUS_CONFIG[status].colorClass} hover:bg-foreground/5`
-                  }`}
-                >
-                  {STATUS_CONFIG[status].icon}
-                  <span className="flex-1 text-left">{STATUS_CONFIG[status].label}</span>
-                  {sessionCounts[status] > 0 && (
-                    <span className="text-xs opacity-70">{sessionCounts[status]}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <MobileNavButton
-            icon={<Flag className="w-5 h-5" />}
-            label="Flagged"
-            isActive={activeSection === 'flagged'}
-            onClick={() => handleSectionChange('flagged')}
-            badge={flaggedSessions.length > 0 ? flaggedSessions.length : undefined}
-          />
-          <MobileNavButton
-            icon={<Plug className="w-5 h-5" />}
-            label="Sources"
-            isActive={activeSection === 'sources'}
-            onClick={() => handleSectionChange('sources')}
-          />
-          <MobileNavButton
-            icon={<Wand2 className="w-5 h-5" />}
-            label="Skills"
-            isActive={activeSection === 'skills'}
-            onClick={() => handleSectionChange('skills')}
-          />
-          <MobileNavButton
-            icon={<Settings className="w-5 h-5" />}
-            label="Settings"
-            isActive={activeSection === 'settings'}
-            onClick={() => handleSectionChange('settings')}
-          />
-          <div className="pt-4 mt-4 border-t border-foreground/10">
-            <MobileNavButton
-              icon={<LogOut className="w-5 h-5" />}
-              label="Logout"
-              onClick={logout}
-            />
-          </div>
-        </nav>
-      </div>
-
-      {/* Desktop Left Sidebar - Navigation */}
-      <div className="hidden md:flex w-14 flex-col items-center py-3 bg-foreground-3 border-r border-foreground/5 shrink-0">
-        {/* Logo */}
-        <div className="mb-4">
-          <CraftAgentLogo className="w-8 h-8 text-accent" />
-        </div>
-
-        {/* Navigation buttons */}
-        <nav className="flex-1 flex flex-col gap-1">
-          <NavButton
-            icon={<MessageSquare className="w-5 h-5" />}
-            label="Chats"
-            isActive={activeSection === 'chats'}
-            onClick={() => setActiveSection('chats')}
-          />
-          <NavButton
-            icon={<Flag className="w-5 h-5" />}
-            label="Flagged"
-            isActive={activeSection === 'flagged'}
-            onClick={() => setActiveSection('flagged')}
-            badge={flaggedSessions.length > 0 ? flaggedSessions.length : undefined}
-          />
-          <NavButton
-            icon={<Plug className="w-5 h-5" />}
-            label="Sources"
-            isActive={activeSection === 'sources'}
-            onClick={() => setActiveSection('sources')}
-          />
-          <NavButton
-            icon={<Wand2 className="w-5 h-5" />}
-            label="Skills"
-            isActive={activeSection === 'skills'}
-            onClick={() => setActiveSection('skills')}
-          />
-        </nav>
-
-        {/* Bottom nav */}
-        <div className="flex flex-col gap-1">
-          <NavButton
-            icon={<Settings className="w-5 h-5" />}
-            label="Settings"
-            isActive={activeSection === 'settings'}
-            onClick={() => setActiveSection('settings')}
-          />
-          <NavButton
-            icon={<LogOut className="w-5 h-5" />}
-            label="Logout"
-            onClick={logout}
-          />
-        </div>
-      </div>
-
-      {/* Navigator Panel - List view (desktop always, mobile conditionally) */}
-      <div className={`${
-        showListPanel ? 'flex' : 'hidden'
-      } md:flex w-full md:w-72 flex-col bg-foreground-2 md:shadow-middle shrink-0`}>
-        {/* Section header */}
-        <div className="p-4 border-b border-foreground/5">
-          <h2 className="text-base font-semibold text-foreground capitalize flex items-center gap-2">
-            {activeSection === 'chats' && selectedStatus !== 'all' ? (
-              <>
-                {STATUS_CONFIG[selectedStatus].icon}
-                {STATUS_CONFIG[selectedStatus].label}
-              </>
-            ) : activeSection === 'flagged' ? (
-              'Flagged Chats'
+          {/* Main Content Panel */}
+          <div className={`flex-1 flex flex-col min-w-0 ${
+            !showListPanel ? 'flex' : 'hidden md:flex'
+          }`}>
+            {(activeSection === 'chats' || activeSection === 'flagged') && selectedSession ? (
+              <ChatPage
+                session={selectedSession}
+                onSessionUpdate={handleSessionUpdate}
+              />
+            ) : activeSection === 'sources' && selectedSource ? (
+              <SourceDetail source={selectedSource} workspaceId={workspaceId} />
+            ) : activeSection === 'settings' ? (
+              <SettingsDetail
+                settings={workspaceSettings}
+                isLoading={isLoadingSettings}
+                workspaceId={workspaceId}
+              />
             ) : (
-              activeSection
+              <EmptyState section={activeSection} onNewChat={handleNewSession} />
             )}
-          </h2>
-          <p className="text-xs text-foreground-50 mt-0.5">
-            {activeSection === 'chats' && (selectedStatus === 'all'
-              ? `${sessions.length} conversations`
-              : `${filteredSessions.length} in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`
-            )}
-            {activeSection === 'flagged' && `${flaggedSessions.length} flagged`}
-            {activeSection === 'sources' && `${sources.length} sources`}
-            {activeSection === 'skills' && `${skills.length} skills`}
-            {activeSection === 'settings' && 'Workspace settings'}
-          </p>
-        </div>
-
-        {/* Status filter bar - desktop only, when in chats section */}
-        {activeSection === 'chats' && (
-          <div className="hidden md:block px-3 py-2 border-b border-foreground/5">
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setSelectedStatus('all')}
-                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                  selectedStatus === 'all'
-                    ? 'bg-accent text-white'
-                    : 'text-foreground-50 hover:bg-foreground/5'
-                }`}
-              >
-                All
-              </button>
-              {STATUS_ORDER.map(status => (
-                <button
-                  key={status}
-                  onClick={() => setSelectedStatus(status)}
-                  title={STATUS_CONFIG[status].label}
-                  className={`p-1.5 rounded transition-colors ${
-                    selectedStatus === status
-                      ? 'bg-accent text-white'
-                      : `${STATUS_CONFIG[status].colorClass} hover:bg-foreground/5`
-                  }`}
-                >
-                  {React.cloneElement(STATUS_CONFIG[status].icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
-                </button>
-              ))}
-            </div>
           </div>
+        </div>
+      </SidebarInset>
+    </>
+  )
+}
+
+/**
+ * Mobile header with back button and menu trigger
+ */
+function MobileHeader({
+  activeSection,
+  selectedStatus,
+  showListPanel,
+  hasDetailView,
+  onBackToList,
+}: {
+  activeSection: NavSection
+  selectedStatus: SessionStatus | 'all'
+  showListPanel: boolean
+  hasDetailView: boolean
+  onBackToList: () => void
+}) {
+  const { toggleSidebar } = useSidebar()
+
+  return (
+    <div className="md:hidden flex items-center justify-between p-3 bg-foreground-2 border-b border-foreground/5 shrink-0">
+      <div className="flex items-center gap-3">
+        {!showListPanel && hasDetailView && (
+          <button
+            onClick={onBackToList}
+            className="p-2 -ml-2 rounded-lg text-foreground-50 hover:bg-foreground/5"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
         )}
-
-        {/* Action button (for chats) */}
-        {(activeSection === 'chats' || activeSection === 'flagged') && (
-          <div className="p-3 border-b border-foreground/5">
-            <button
-              onClick={handleNewSession}
-              className="w-full px-4 py-3 md:py-2.5 bg-accent text-white rounded-lg shadow-minimal hover:opacity-90 active:opacity-80 transition-opacity font-medium flex items-center justify-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              New Chat
-            </button>
-          </div>
-        )}
-
-        {/* List content */}
-        <div className="flex-1 overflow-y-auto">
-          {/* Chats list */}
-          {activeSection === 'chats' && (
-            <SessionList
-              sessions={filteredSessions}
-              selectedSession={selectedSession}
-              isLoading={isLoadingSessions}
-              onSelect={handleSelectSession}
-              emptyMessage={selectedStatus === 'all' ? 'No sessions yet' : `No sessions in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`}
-            />
-          )}
-
-          {/* Flagged list */}
-          {activeSection === 'flagged' && (
-            <SessionList
-              sessions={flaggedSessions}
-              selectedSession={selectedSession}
-              isLoading={isLoadingSessions}
-              onSelect={handleSelectSession}
-              emptyMessage="No flagged chats"
-            />
-          )}
-
-          {/* Sources list */}
-          {activeSection === 'sources' && (
-            <SourcesList
-              sources={sources}
-              selectedSource={selectedSource}
-              isLoading={isLoadingSources}
-              onSelect={(source) => {
-                setSelectedSource(source)
-                setShowListPanel(false)
-              }}
-            />
-          )}
-
-          {/* Skills list */}
-          {activeSection === 'skills' && (
-            <SkillsList
-              skills={skills}
-              isLoading={isLoadingSkills}
-            />
-          )}
-
-          {/* Settings list */}
-          {activeSection === 'settings' && (
-            <SettingsList onSelect={() => setShowListPanel(false)} />
-          )}
-        </div>
-
-        {/* Platform info - desktop only */}
-        <div className="hidden md:block p-3 border-t border-foreground/5">
-          <div className="text-foreground-40 text-xs">
-            {capabilities.canRunLocalMcp ? 'Local MCP' : 'Remote MCP'} •
-            {capabilities.hasMultiWindow ? ' Multi-window' : ' Single-window'}
-          </div>
-        </div>
+        <CraftAgentLogo className="w-7 h-7 text-accent" />
+        <span className="font-semibold text-foreground">Craft Agents</span>
       </div>
-
-      {/* Main Content Panel */}
-      <div className={`flex-1 flex flex-col min-w-0 ${
-        !showListPanel ? 'flex' : 'hidden md:flex'
-      }`}>
-        {(activeSection === 'chats' || activeSection === 'flagged') && selectedSession ? (
-          <ChatPage
-            session={selectedSession}
-            onSessionUpdate={handleSessionUpdate}
-          />
-        ) : activeSection === 'sources' && selectedSource ? (
-          <SourceDetail source={selectedSource} workspaceId={workspaceId} />
-        ) : activeSection === 'settings' ? (
-          <SettingsDetail
-            settings={workspaceSettings}
-            isLoading={isLoadingSettings}
-            workspaceId={workspaceId}
-          />
-        ) : (
-          <EmptyState section={activeSection} onNewChat={handleNewSession} />
-        )}
-      </div>
+      <SidebarTrigger className="p-2 rounded-lg text-foreground-50 hover:bg-foreground/5" />
     </div>
   )
 }
 
 /**
- * Desktop Navigation button component
+ * Navigator Panel - the list panel between sidebar and content
  */
-function NavButton({
-  icon,
-  label,
-  isActive,
-  onClick,
-  badge,
+function NavigatorPanel({
+  activeSection,
+  selectedStatus,
+  showListPanel,
+  filteredSessions,
+  flaggedSessions,
+  selectedSession,
+  isLoadingSessions,
+  onSelectSession,
+  onNewSession,
+  onStatusChange,
+  sessionCounts,
+  sources,
+  selectedSource,
+  isLoadingSources,
+  onSelectSource,
+  skills,
+  isLoadingSkills,
+  onSettingsSelect,
+  platformInfo,
 }: {
-  icon: React.ReactNode
-  label: string
-  isActive?: boolean
-  onClick: () => void
-  badge?: number
+  activeSection: NavSection
+  selectedStatus: SessionStatus | 'all'
+  showListPanel: boolean
+  filteredSessions: Session[]
+  flaggedSessions: Session[]
+  selectedSession: Session | null
+  isLoadingSessions: boolean
+  onSelectSession: (session: Session) => void
+  onNewSession: () => void
+  onStatusChange: (status: SessionStatus | 'all') => void
+  sessionCounts: Record<SessionStatus, number>
+  sources: LoadedSource[]
+  selectedSource: LoadedSource | null
+  isLoadingSources: boolean
+  onSelectSource: (source: LoadedSource) => void
+  skills: LoadedSkill[]
+  isLoadingSkills: boolean
+  onSettingsSelect: () => void
+  platformInfo: string
 }) {
   return (
-    <button
-      onClick={onClick}
-      title={label}
-      className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors relative ${
-        isActive
-          ? 'bg-accent text-white'
-          : 'text-foreground-50 hover:bg-foreground/5 hover:text-foreground'
-      }`}
-    >
-      {icon}
-      {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent text-white text-[10px] rounded-full flex items-center justify-center">
-          {badge > 9 ? '9+' : badge}
-        </span>
-      )}
-    </button>
-  )
-}
+    <div className={`${
+      showListPanel ? 'flex' : 'hidden'
+    } md:flex w-full md:w-72 flex-col bg-foreground-2 md:shadow-middle md:border-r md:border-foreground/5 shrink-0`}>
+      {/* Section header */}
+      <div className="p-4 border-b border-foreground/5">
+        <h2 className="text-base font-semibold text-foreground capitalize flex items-center gap-2">
+          {activeSection === 'chats' && selectedStatus !== 'all' ? (
+            <>
+              {React.createElement(STATUS_CONFIG[selectedStatus].icon, { className: 'w-4 h-4' })}
+              {STATUS_CONFIG[selectedStatus].label}
+            </>
+          ) : activeSection === 'flagged' ? (
+            'Flagged Chats'
+          ) : (
+            activeSection
+          )}
+        </h2>
+        <p className="text-xs text-foreground-50 mt-0.5">
+          {activeSection === 'chats' && (selectedStatus === 'all'
+            ? `${filteredSessions.length} conversations`
+            : `${filteredSessions.length} in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`
+          )}
+          {activeSection === 'flagged' && `${flaggedSessions.length} flagged`}
+          {activeSection === 'sources' && `${sources.length} sources`}
+          {activeSection === 'skills' && `${skills.length} skills`}
+          {activeSection === 'settings' && 'Workspace settings'}
+        </p>
+      </div>
 
-/**
- * Mobile Navigation button component
- */
-function MobileNavButton({
-  icon,
-  label,
-  isActive,
-  onClick,
-  badge,
-}: {
-  icon: React.ReactNode
-  label: string
-  isActive?: boolean
-  onClick: () => void
-  badge?: number
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-        isActive
-          ? 'bg-accent text-white'
-          : 'text-foreground hover:bg-foreground/5'
-      }`}
-    >
-      {icon}
-      <span className="flex-1 text-left font-medium">{label}</span>
-      {badge !== undefined && badge > 0 && (
-        <span className={`px-2 py-0.5 text-xs rounded-full ${
-          isActive ? 'bg-white/20' : 'bg-accent text-white'
-        }`}>
-          {badge}
-        </span>
+      {/* Status filter bar - desktop only, when in chats section */}
+      {activeSection === 'chats' && (
+        <div className="hidden md:block px-3 py-2 border-b border-foreground/5">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onStatusChange('all')}
+              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                selectedStatus === 'all'
+                  ? 'bg-accent text-white'
+                  : 'text-foreground-50 hover:bg-foreground/5'
+              }`}
+            >
+              All
+            </button>
+            {STATUS_ORDER.map(status => (
+              <button
+                key={status}
+                onClick={() => onStatusChange(status)}
+                title={STATUS_CONFIG[status].label}
+                className={`p-1.5 rounded transition-colors ${
+                  selectedStatus === status
+                    ? 'bg-accent text-white'
+                    : `${STATUS_CONFIG[status].colorClass} hover:bg-foreground/5`
+                }`}
+              >
+                {React.createElement(STATUS_CONFIG[status].icon, { className: 'w-3.5 h-3.5' })}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
-    </button>
+
+      {/* Action button (for chats) */}
+      {(activeSection === 'chats' || activeSection === 'flagged') && (
+        <div className="p-3 border-b border-foreground/5">
+          <button
+            onClick={onNewSession}
+            className="w-full px-4 py-3 md:py-2.5 bg-accent text-white rounded-lg shadow-minimal hover:opacity-90 active:opacity-80 transition-opacity font-medium flex items-center justify-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            New Chat
+          </button>
+        </div>
+      )}
+
+      {/* List content */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Chats list */}
+        {activeSection === 'chats' && (
+          <SessionList
+            sessions={filteredSessions}
+            selectedSession={selectedSession}
+            isLoading={isLoadingSessions}
+            onSelect={onSelectSession}
+            emptyMessage={selectedStatus === 'all' ? 'No sessions yet' : `No sessions in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`}
+          />
+        )}
+
+        {/* Flagged list */}
+        {activeSection === 'flagged' && (
+          <SessionList
+            sessions={flaggedSessions}
+            selectedSession={selectedSession}
+            isLoading={isLoadingSessions}
+            onSelect={onSelectSession}
+            emptyMessage="No flagged chats"
+          />
+        )}
+
+        {/* Sources list */}
+        {activeSection === 'sources' && (
+          <SourcesList
+            sources={sources}
+            selectedSource={selectedSource}
+            isLoading={isLoadingSources}
+            onSelect={onSelectSource}
+          />
+        )}
+
+        {/* Skills list */}
+        {activeSection === 'skills' && (
+          <SkillsList
+            skills={skills}
+            isLoading={isLoadingSkills}
+          />
+        )}
+
+        {/* Settings list */}
+        {activeSection === 'settings' && (
+          <SettingsList onSelect={onSettingsSelect} />
+        )}
+      </div>
+
+      {/* Platform info - desktop only */}
+      <div className="hidden md:block p-3 border-t border-foreground/5">
+        <div className="text-foreground-40 text-xs">
+          {platformInfo}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -690,6 +583,7 @@ function SessionList({
       {sessions.map((session) => {
         const status = (session.todoState || 'backlog') as SessionStatus
         const statusConfig = STATUS_CONFIG[status]
+        const StatusIcon = statusConfig.icon
         return (
           <li key={session.id}>
             <button
@@ -705,7 +599,7 @@ function SessionList({
                 <span className={`shrink-0 ${
                   selectedSession?.id === session.id ? 'text-white' : statusConfig.colorClass
                 }`}>
-                  {React.cloneElement(statusConfig.icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
+                  <StatusIcon className="w-3.5 h-3.5" />
                 </span>
                 <span className="font-medium truncate text-sm flex-1">
                   {session.name || 'New Chat'}

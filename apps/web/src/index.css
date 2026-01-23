@@ -47,6 +47,27 @@
   --z-floating-backdrop: 390;
   --z-floating-menu: 400;
   --z-splash: 600;
+
+  /* Sidebar theming - uses existing foreground colors */
+  --sidebar-background: var(--foreground-2);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: var(--foreground-5);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: oklch(from var(--foreground) l c h / 0.05);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  --sidebar-background: var(--foreground-3);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: var(--foreground-5);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: oklch(from var(--foreground) l c h / 0.05);
+  --sidebar-ring: var(--ring);
 }
 
 /* Tailwind v4 theme extension for z-index */
@@ -64,6 +85,16 @@
   --z-index-floating-backdrop: var(--z-floating-backdrop);
   --z-index-floating-menu: var(--z-floating-menu);
   --z-index-splash: var(--z-splash);
+
+  /* Sidebar colors */
+  --color-sidebar-background: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 /* =============================================================================
