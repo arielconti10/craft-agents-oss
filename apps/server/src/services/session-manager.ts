@@ -72,11 +72,28 @@ interface UserState {
   sessions: Map<string, ManagedSession>
   workspaces: Map<string, Workspace>
   drafts: Map<string, string>
+  /** Workspace settings keyed by workspace ID */
+  workspaceSettings: Map<string, WorkspaceSettings>
   settings: {
     model: string | null
     colorTheme: string
     billingMethod: BillingMethodInfo
   }
+}
+
+/**
+ * Shared session data for public viewing
+ */
+interface SharedSessionData {
+  id: string
+  shareId: string
+  sessionId: string
+  userId: string
+  name: string
+  workspaceName: string
+  messages: Message[]
+  sharedAt: number
+  updatedAt: number
 }
 
 /**
@@ -87,6 +104,10 @@ interface UserState {
  */
 class ServerSessionManager {
   private users = new Map<string, UserState>()
+  /** Map of shareId -> SharedSessionData for public viewing */
+  private sharedSessions = new Map<string, SharedSessionData>()
+  /** Map of sessionId -> shareId for quick lookup */
+  private sessionToShareId = new Map<string, string>()
 
   /**
    * Get or create user state
@@ -97,6 +118,7 @@ class ServerSessionManager {
         sessions: new Map(),
         workspaces: new Map(),
         drafts: new Map(),
+        workspaceSettings: new Map(),
         settings: {
           model: null,
           colorTheme: 'system',
@@ -737,17 +759,228 @@ class ServerSessionManager {
         break
 
       case 'shareToViewer':
-        // TODO: Implement sharing
-        return { success: false, error: 'Sharing not yet implemented' }
+        return this.shareSession(userId, sessionId, managed)
+
+      case 'updateShare':
+        return this.updateShare(userId, sessionId, managed)
+
+      case 'revokeShare':
+        return this.revokeShare(sessionId)
 
       case 'refreshTitle':
-        // TODO: Implement title generation
-        return { success: true, title: managed.name || 'New Chat' }
+        return this.refreshTitle(managed)
 
       default:
         // Other commands handled silently
         break
     }
+  }
+
+  // ==========================================
+  // Title Generation
+  // ==========================================
+
+  /**
+   * Generate a title from the session's messages
+   */
+  private refreshTitle(managed: ManagedSession): RefreshTitleResult {
+    try {
+      // Get the first user message
+      const firstUserMessage = managed.messages.find(m => m.role === 'user')
+      if (!firstUserMessage || !firstUserMessage.content) {
+        return { success: true, title: managed.name || 'New Chat' }
+      }
+
+      // Extract text content (handle both string and array content)
+      let text = ''
+      if (typeof firstUserMessage.content === 'string') {
+        text = firstUserMessage.content
+      } else if (Array.isArray(firstUserMessage.content)) {
+        // Handle content blocks array
+        const contentArray = firstUserMessage.content as Array<{ type: string; text?: string }>
+        const textBlock = contentArray.find((block) => block.type === 'text')
+        if (textBlock && textBlock.text) {
+          text = textBlock.text
+        }
+      }
+
+      // Generate title: first line up to 60 chars, or first sentence
+      const firstLine = text.trim().split('\n')[0]
+      let title = (firstLine || '')
+        .replace(/^#+\s*/, '') // Remove markdown headers
+        .trim()
+
+      // Truncate if too long
+      if (title.length > 60) {
+        title = title.slice(0, 57) + '...'
+      }
+
+      // Update the managed session name
+      managed.name = title
+
+      // Broadcast the title update
+      this.broadcast(managed.id, {
+        type: 'title_generated',
+        sessionId: managed.id,
+        title,
+      })
+
+      return { success: true, title }
+    } catch (error) {
+      console.error('Error refreshing title:', error)
+      return {
+        success: false,
+        title: managed.name || 'New Chat',
+        error: error instanceof Error ? error.message : 'Failed to refresh title',
+      }
+    }
+  }
+
+  // ==========================================
+  // Session Sharing
+  // ==========================================
+
+  /**
+   * Generate a unique share ID
+   */
+  private generateShareId(): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    let result = ''
+    for (let i = 0; i < 12; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return result
+  }
+
+  /**
+   * Share a session and return the shareable URL
+   */
+  private shareSession(
+    userId: string,
+    sessionId: string,
+    managed: ManagedSession
+  ): ShareResult {
+    try {
+      // Check if already shared
+      const existingShareId = this.sessionToShareId.get(sessionId)
+      if (existingShareId) {
+        const shareUrl = this.getShareUrl(existingShareId)
+        return { success: true, url: shareUrl }
+      }
+
+      // Generate new share ID
+      const shareId = this.generateShareId()
+
+      // Create shared session data
+      const sharedData: SharedSessionData = {
+        id: shareId,
+        shareId,
+        sessionId,
+        userId,
+        name: managed.name || 'Shared Chat',
+        workspaceName: managed.workspaceName,
+        messages: [...managed.messages], // Copy messages
+        sharedAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+
+      // Store shared session
+      this.sharedSessions.set(shareId, sharedData)
+      this.sessionToShareId.set(sessionId, shareId)
+
+      const shareUrl = this.getShareUrl(shareId)
+      console.log(`Session ${sessionId} shared at ${shareUrl}`)
+
+      return { success: true, url: shareUrl }
+    } catch (error) {
+      console.error('Error sharing session:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to share session',
+      }
+    }
+  }
+
+  /**
+   * Update an existing shared session
+   */
+  private updateShare(
+    _userId: string,
+    sessionId: string,
+    managed: ManagedSession
+  ): ShareResult {
+    try {
+      const shareId = this.sessionToShareId.get(sessionId)
+      if (!shareId) {
+        return { success: false, error: 'Session is not shared' }
+      }
+
+      const sharedData = this.sharedSessions.get(shareId)
+      if (!sharedData) {
+        return { success: false, error: 'Shared session data not found' }
+      }
+
+      // Update shared data
+      sharedData.name = managed.name || 'Shared Chat'
+      sharedData.messages = [...managed.messages]
+      sharedData.updatedAt = Date.now()
+
+      const shareUrl = this.getShareUrl(shareId)
+      return { success: true, url: shareUrl }
+    } catch (error) {
+      console.error('Error updating share:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update share',
+      }
+    }
+  }
+
+  /**
+   * Revoke a shared session
+   */
+  private revokeShare(sessionId: string): ShareResult {
+    try {
+      const shareId = this.sessionToShareId.get(sessionId)
+      if (!shareId) {
+        return { success: false, error: 'Session is not shared' }
+      }
+
+      // Remove from both maps
+      this.sharedSessions.delete(shareId)
+      this.sessionToShareId.delete(sessionId)
+
+      console.log(`Session ${sessionId} share revoked`)
+      return { success: true }
+    } catch (error) {
+      console.error('Error revoking share:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to revoke share',
+      }
+    }
+  }
+
+  /**
+   * Get share URL for a given share ID
+   */
+  private getShareUrl(shareId: string): string {
+    const baseUrl = process.env.WEB_URL || 'http://localhost:5175'
+    return `${baseUrl}/share/${shareId}`
+  }
+
+  /**
+   * Get shared session data by share ID (public method for route handler)
+   */
+  getSharedSession(shareId: string): SharedSessionData | null {
+    return this.sharedSessions.get(shareId) || null
+  }
+
+  /**
+   * Get share ID for a session (to check if shared)
+   */
+  getShareIdForSession(sessionId: string): string | null {
+    return this.sessionToShareId.get(sessionId) || null
   }
 
   // ==========================================
@@ -786,21 +1019,43 @@ class ServerSessionManager {
     return workspace
   }
 
-  async getWorkspaceSettings(_userId: string, _workspaceId: string): Promise<WorkspaceSettings | null> {
-    // TODO: Implement workspace settings storage
-    return {
+  async getWorkspaceSettings(userId: string, workspaceId: string): Promise<WorkspaceSettings | null> {
+    const state = this.getUserState(userId)
+    const settings = state.workspaceSettings.get(workspaceId)
+
+    // Return stored settings or default
+    return settings || {
       permissionMode: 'ask',
       thinkingLevel: 'think',
     }
   }
 
   async updateWorkspaceSetting(
-    _userId: string,
-    _workspaceId: string,
-    _key: string,
-    _value: unknown
+    userId: string,
+    workspaceId: string,
+    key: string,
+    value: unknown
   ): Promise<void> {
-    // TODO: Implement workspace settings update
+    const state = this.getUserState(userId)
+
+    // Get existing settings or create new
+    let settings = state.workspaceSettings.get(workspaceId)
+    if (!settings) {
+      settings = {
+        permissionMode: 'ask',
+        thinkingLevel: 'think',
+      }
+    }
+
+    // Update the specific setting
+    if (key === 'permissionMode') {
+      settings.permissionMode = value as WorkspaceSettings['permissionMode']
+    } else if (key === 'thinkingLevel') {
+      settings.thinkingLevel = value as WorkspaceSettings['thinkingLevel']
+    }
+
+    // Store updated settings
+    state.workspaceSettings.set(workspaceId, settings)
   }
 
   async getWorkspacePermissionsConfig(
@@ -920,14 +1175,65 @@ class ServerSessionManager {
 
   async testApiConnection(
     apiKey: string,
-    _baseUrl?: string,
+    baseUrl?: string,
     _modelName?: string
   ): Promise<{ success: boolean; error?: string; modelCount?: number }> {
-    // TODO: Implement actual API test
+    // Validate API key format
     if (!apiKey.startsWith('sk-')) {
-      return { success: false, error: 'Invalid API key format' }
+      return { success: false, error: 'Invalid API key format. API keys should start with "sk-"' }
     }
-    return { success: true, modelCount: 3 }
+
+    try {
+      // Test the API key by making a minimal request to Anthropic
+      const url = baseUrl || 'https://api.anthropic.com'
+      const response = await fetch(`${url}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'test' }],
+        }),
+      })
+
+      if (response.ok) {
+        return { success: true, modelCount: 3 }
+      }
+
+      // Parse error response
+      const errorData = await response.json().catch(() => ({})) as { error?: { message?: string } }
+      const errorMessage = errorData.error?.message || `HTTP ${response.status}`
+
+      // Check for common error types
+      if (response.status === 401) {
+        return { success: false, error: 'Invalid API key. Please check your key and try again.' }
+      }
+      if (response.status === 403) {
+        return { success: false, error: 'Access denied. Your API key may not have the required permissions.' }
+      }
+      if (response.status === 429) {
+        // Rate limited but API key is valid
+        return { success: true, modelCount: 3 }
+      }
+
+      return { success: false, error: errorMessage }
+    } catch (error) {
+      console.error('API connection test error:', error)
+
+      // Handle network errors
+      if (error instanceof Error) {
+        if (error.message.includes('fetch')) {
+          return { success: false, error: 'Network error. Please check your internet connection.' }
+        }
+        return { success: false, error: error.message }
+      }
+
+      return { success: false, error: 'Failed to test API connection' }
+    }
   }
 
   async getModel(userId: string): Promise<string | null> {

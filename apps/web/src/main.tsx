@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
+import { SharedSessionPage } from './pages/SharedSessionPage'
 import { PlatformProvider } from './contexts/PlatformContext'
 import './index.css'
 
@@ -17,10 +18,35 @@ function setupTheme() {
 
 setupTheme()
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+/**
+ * Simple URL-based router
+ * Handles /share/:shareId routes for public shared session viewing
+ */
+function Router() {
+  const [path, setPath] = React.useState(window.location.pathname)
+
+  React.useEffect(() => {
+    const handlePopState = () => setPath(window.location.pathname)
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  // Check for shared session route: /share/:shareId
+  const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/)
+  if (shareMatch && shareMatch[1]) {
+    return <SharedSessionPage shareId={shareMatch[1]} />
+  }
+
+  // Default: main app with authentication
+  return (
     <PlatformProvider>
       <App />
     </PlatformProvider>
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <Router />
   </React.StrictMode>
 )

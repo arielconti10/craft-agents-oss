@@ -16,6 +16,7 @@ import { settingsRoutes } from './routes/settings'
 import { themesRoutes } from './routes/themes'
 import { createWebSocketHandler } from './ws/handler'
 import { authMiddleware } from './middleware/auth'
+import { getSessionManager } from './services/session-manager'
 
 // Create Hono app
 const app = new Hono()
@@ -50,6 +51,29 @@ app.use('*', logger())
 
 app.get('/health', (c) => {
   return c.json({ status: 'ok', version: '0.2.25' })
+})
+
+// ==========================================
+// Public Share Route (no auth required)
+// ==========================================
+
+app.get('/api/share/:shareId', (c) => {
+  const shareId = c.req.param('shareId')
+  const sessionManager = getSessionManager()
+  const sharedSession = sessionManager.getSharedSession(shareId)
+
+  if (!sharedSession) {
+    return c.json({ error: 'Shared session not found or has been revoked' }, 404)
+  }
+
+  return c.json({
+    id: sharedSession.id,
+    name: sharedSession.name,
+    workspaceName: sharedSession.workspaceName,
+    messages: sharedSession.messages,
+    sharedAt: sharedSession.sharedAt,
+    updatedAt: sharedSession.updatedAt,
+  })
 })
 
 // ==========================================

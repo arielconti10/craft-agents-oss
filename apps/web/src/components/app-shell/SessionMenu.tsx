@@ -26,6 +26,11 @@ import {
   CheckCircle,
   XCircle,
   Inbox,
+  Share2,
+  Copy,
+  Link2Off,
+  Globe,
+  RefreshCw,
 } from 'lucide-react'
 import { cn } from '@craft-agent/ui'
 import {
@@ -61,12 +66,20 @@ interface SessionMenuProps {
   hasMessages: boolean
   hasUnreadMessages: boolean
   currentStatus: SessionStatus
+  /** Shared URL if session is shared */
+  sharedUrl?: string | null
   onStatusChange: (status: SessionStatus) => void
   onFlag: () => void
   onUnflag: () => void
   onMarkUnread: () => void
   onRename: (newName: string) => void
   onDelete: () => void
+  /** Share session and return URL */
+  onShare?: () => Promise<{ success: boolean; url?: string; error?: string }>
+  /** Update existing share */
+  onUpdateShare?: () => Promise<{ success: boolean; error?: string }>
+  /** Revoke share */
+  onRevokeShare?: () => Promise<{ success: boolean; error?: string }>
   /** Render as icon button (default) or as a slot for custom trigger */
   children?: React.ReactNode
 }
@@ -93,12 +106,16 @@ export function SessionMenu({
   hasMessages,
   hasUnreadMessages,
   currentStatus,
+  sharedUrl,
   onStatusChange,
   onFlag,
   onUnflag,
   onMarkUnread,
   onRename,
   onDelete,
+  onShare,
+  onUpdateShare,
+  onRevokeShare,
   children,
 }: SessionMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -106,6 +123,8 @@ export function SessionMenu({
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [renameValue, setRenameValue] = useState(sessionName)
+  const [isSharing, setIsSharing] = useState(false)
+  const [shareMessage, setShareMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Detect if we're on mobile
   const [isMobile, setIsMobile] = useState(false)
@@ -169,6 +188,85 @@ export function SessionMenu({
     setIsMobileSheetOpen(false)
   }, [onStatusChange])
 
+  const handleShare = useCallback(async () => {
+    if (!onShare) return
+    setIsSharing(true)
+    try {
+      const result = await onShare()
+      if (result.success && result.url) {
+        await navigator.clipboard.writeText(result.url)
+        setShareMessage({ type: 'success', text: 'Link copied to clipboard!' })
+        setTimeout(() => setShareMessage(null), 3000)
+      } else {
+        setShareMessage({ type: 'error', text: result.error || 'Failed to share' })
+        setTimeout(() => setShareMessage(null), 3000)
+      }
+    } catch (error) {
+      setShareMessage({ type: 'error', text: 'Failed to share session' })
+      setTimeout(() => setShareMessage(null), 3000)
+    } finally {
+      setIsSharing(false)
+      setIsOpen(false)
+      setIsMobileSheetOpen(false)
+    }
+  }, [onShare])
+
+  const handleCopyLink = useCallback(async () => {
+    if (sharedUrl) {
+      await navigator.clipboard.writeText(sharedUrl)
+      setShareMessage({ type: 'success', text: 'Link copied!' })
+      setTimeout(() => setShareMessage(null), 3000)
+    }
+    setIsOpen(false)
+    setIsMobileSheetOpen(false)
+  }, [sharedUrl])
+
+  const handleOpenInBrowser = useCallback(() => {
+    if (sharedUrl) {
+      window.open(sharedUrl, '_blank')
+    }
+    setIsOpen(false)
+    setIsMobileSheetOpen(false)
+  }, [sharedUrl])
+
+  const handleUpdateShare = useCallback(async () => {
+    if (!onUpdateShare) return
+    try {
+      const result = await onUpdateShare()
+      if (result.success) {
+        setShareMessage({ type: 'success', text: 'Share updated!' })
+        setTimeout(() => setShareMessage(null), 3000)
+      } else {
+        setShareMessage({ type: 'error', text: result.error || 'Failed to update' })
+        setTimeout(() => setShareMessage(null), 3000)
+      }
+    } catch (error) {
+      setShareMessage({ type: 'error', text: 'Failed to update share' })
+      setTimeout(() => setShareMessage(null), 3000)
+    }
+    setIsOpen(false)
+    setIsMobileSheetOpen(false)
+  }, [onUpdateShare])
+
+  const handleRevokeShare = useCallback(async () => {
+    if (!onRevokeShare) return
+    try {
+      const result = await onRevokeShare()
+      if (result.success) {
+        setShareMessage({ type: 'success', text: 'Sharing stopped' })
+        setTimeout(() => setShareMessage(null), 3000)
+      } else {
+        setShareMessage({ type: 'error', text: result.error || 'Failed to stop sharing' })
+        setTimeout(() => setShareMessage(null), 3000)
+      }
+    } catch (error) {
+      setShareMessage({ type: 'error', text: 'Failed to stop sharing' })
+      setTimeout(() => setShareMessage(null), 3000)
+    }
+    setIsOpen(false)
+    setIsMobileSheetOpen(false)
+  }, [onRevokeShare])
+
   // Trigger button
   const triggerButton = children || (
     <button
@@ -193,6 +291,48 @@ export function SessionMenu({
             {triggerButton}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            {/* Share - Show different menu based on shared state */}
+            {onShare && (
+              <>
+                {!sharedUrl ? (
+                  <DropdownMenuItem onClick={handleShare} disabled={isSharing}>
+                    <Share2 className="w-4 h-4" />
+                    <span className="flex-1">{isSharing ? 'Sharing...' : 'Share'}</span>
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Share2 className="w-4 h-4" />
+                      <span className="flex-1">Shared</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <DropdownMenuItem onClick={handleOpenInBrowser}>
+                        <Globe className="w-4 h-4" />
+                        <span className="flex-1">Open in Browser</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleCopyLink}>
+                        <Copy className="w-4 h-4" />
+                        <span className="flex-1">Copy Link</span>
+                      </DropdownMenuItem>
+                      {onUpdateShare && (
+                        <DropdownMenuItem onClick={handleUpdateShare}>
+                          <RefreshCw className="w-4 h-4" />
+                          <span className="flex-1">Update Share</span>
+                        </DropdownMenuItem>
+                      )}
+                      {onRevokeShare && (
+                        <DropdownMenuItem onClick={handleRevokeShare} variant="destructive">
+                          <Link2Off className="w-4 h-4" />
+                          <span className="flex-1">Stop Sharing</span>
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
+                <DropdownMenuSeparator />
+              </>
+            )}
+
             {/* Status submenu */}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
@@ -267,6 +407,41 @@ export function SessionMenu({
           onOpenChange={setIsMobileSheetOpen}
           title={sessionName || 'Session'}
         >
+          {/* Share options for mobile */}
+          {onShare && (
+            <>
+              {!sharedUrl ? (
+                <ActionSheetItem
+                  icon={<Share2 className="w-5 h-5" />}
+                  onClick={handleShare}
+                  disabled={isSharing}
+                >
+                  {isSharing ? 'Sharing...' : 'Share'}
+                </ActionSheetItem>
+              ) : (
+                <ActionSheetGroup label="Shared">
+                  <ActionSheetItem icon={<Globe className="w-5 h-5" />} onClick={handleOpenInBrowser}>
+                    Open in Browser
+                  </ActionSheetItem>
+                  <ActionSheetItem icon={<Copy className="w-5 h-5" />} onClick={handleCopyLink}>
+                    Copy Link
+                  </ActionSheetItem>
+                  {onUpdateShare && (
+                    <ActionSheetItem icon={<RefreshCw className="w-5 h-5" />} onClick={handleUpdateShare}>
+                      Update Share
+                    </ActionSheetItem>
+                  )}
+                  {onRevokeShare && (
+                    <ActionSheetItem icon={<Link2Off className="w-5 h-5" />} onClick={handleRevokeShare} variant="destructive">
+                      Stop Sharing
+                    </ActionSheetItem>
+                  )}
+                </ActionSheetGroup>
+              )}
+              <ActionSheetSeparator />
+            </>
+          )}
+
           {/* Status group */}
           <ActionSheetGroup label="Status">
             {STATUS_ORDER.map((status) => (
@@ -377,6 +552,20 @@ export function SessionMenu({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Share Message Toast */}
+      {shareMessage && (
+        <div
+          className={cn(
+            'fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-50 text-sm font-medium transition-opacity',
+            shareMessage.type === 'success'
+              ? 'bg-accent text-white'
+              : 'bg-destructive text-white'
+          )}
+        >
+          {shareMessage.text}
+        </div>
+      )}
     </>
   )
 }

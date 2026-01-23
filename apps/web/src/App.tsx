@@ -297,6 +297,56 @@ function MainApp() {
     }
   }, [api, selectedSession?.id, sessions, handleSelectSession])
 
+  // Share session
+  const handleShareSession = useCallback(async (sessionId: string): Promise<{ success: boolean; url?: string; error?: string }> => {
+    try {
+      const result = await api.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
+      if (result?.success && result.url) {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, sharedUrl: result.url } : s
+        ))
+        if (selectedSession?.id === sessionId) {
+          setSelectedSession(prev => prev ? { ...prev, sharedUrl: result.url } : null)
+        }
+        return { success: true, url: result.url }
+      }
+      return { success: false, error: result?.error || 'Failed to share session' }
+    } catch (error) {
+      console.error('Failed to share session:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to share session' }
+    }
+  }, [api, selectedSession?.id])
+
+  // Update share
+  const handleUpdateShare = useCallback(async (sessionId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const result = await api.sessionCommand(sessionId, { type: 'updateShare' }) as { success: boolean; error?: string } | undefined
+      return result || { success: false, error: 'No response' }
+    } catch (error) {
+      console.error('Failed to update share:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update share' }
+    }
+  }, [api])
+
+  // Revoke share
+  const handleRevokeShare = useCallback(async (sessionId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const result = await api.sessionCommand(sessionId, { type: 'revokeShare' }) as { success: boolean; error?: string } | undefined
+      if (result?.success) {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, sharedUrl: undefined, sharedId: undefined } : s
+        ))
+        if (selectedSession?.id === sessionId) {
+          setSelectedSession(prev => prev ? { ...prev, sharedUrl: undefined, sharedId: undefined } : null)
+        }
+      }
+      return result || { success: false, error: 'No response' }
+    } catch (error) {
+      console.error('Failed to revoke share:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to revoke share' }
+    }
+  }, [api, selectedSession?.id])
+
   // Rename session from right sidebar
   const handleRenameFromSidebar = useCallback(async (name: string) => {
     if (!selectedSession) return
@@ -427,6 +477,9 @@ function MainApp() {
             onMarkUnread={handleMarkUnread}
             onRenameSession={handleRenameSession}
             onDeleteSession={handleDeleteSession}
+            onShareSession={handleShareSession}
+            onUpdateShare={handleUpdateShare}
+            onRevokeShare={handleRevokeShare}
           />
 
           {/* Main Content Panel */}
@@ -541,6 +594,9 @@ function NavigatorPanel({
   onMarkUnread,
   onRenameSession,
   onDeleteSession,
+  onShareSession,
+  onUpdateShare,
+  onRevokeShare,
 }: {
   activeSection: NavSection
   selectedStatus: SessionStatus | 'all'
@@ -569,6 +625,9 @@ function NavigatorPanel({
   onMarkUnread?: (sessionId: string) => void
   onRenameSession?: (sessionId: string, newName: string) => void
   onDeleteSession?: (sessionId: string) => void
+  onShareSession?: (sessionId: string) => Promise<{ success: boolean; url?: string; error?: string }>
+  onUpdateShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  onRevokeShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
 }) {
   return (
     <div className={`${
@@ -661,6 +720,9 @@ function NavigatorPanel({
             onMarkUnread={onMarkUnread}
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
+            onShareSession={onShareSession}
+            onUpdateShare={onUpdateShare}
+            onRevokeShare={onRevokeShare}
           />
         )}
 
@@ -678,6 +740,9 @@ function NavigatorPanel({
             onMarkUnread={onMarkUnread}
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
+            onShareSession={onShareSession}
+            onUpdateShare={onUpdateShare}
+            onRevokeShare={onRevokeShare}
           />
         )}
 
@@ -732,6 +797,9 @@ function SessionList({
   onMarkUnread,
   onRenameSession,
   onDeleteSession,
+  onShareSession,
+  onUpdateShare,
+  onRevokeShare,
 }: {
   sessions: Session[]
   selectedSession: Session | null
@@ -744,6 +812,9 @@ function SessionList({
   onMarkUnread?: (sessionId: string) => void
   onRenameSession?: (sessionId: string, newName: string) => void
   onDeleteSession?: (sessionId: string) => void
+  onShareSession?: (sessionId: string) => Promise<{ success: boolean; url?: string; error?: string }>
+  onUpdateShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  onRevokeShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
 }) {
   if (isLoading) {
     return (
@@ -757,7 +828,7 @@ function SessionList({
     return <p className="text-center text-foreground-40 py-8 text-sm">{emptyMessage}</p>
   }
 
-  const hasSessionActions = onStatusChange || onFlagSession || onDeleteSession
+  const hasSessionActions = onStatusChange || onFlagSession || onDeleteSession || onShareSession
 
   return (
     <ul className="px-2 py-1">
@@ -819,12 +890,16 @@ function SessionList({
                     hasMessages={hasMessages}
                     hasUnreadMessages={hasUnreadMessages}
                     currentStatus={status}
+                    sharedUrl={session.sharedUrl}
                     onStatusChange={(newStatus) => onStatusChange?.(session.id, newStatus)}
                     onFlag={() => onFlagSession?.(session.id)}
                     onUnflag={() => onUnflagSession?.(session.id)}
                     onMarkUnread={() => onMarkUnread?.(session.id)}
                     onRename={(newName) => onRenameSession?.(session.id, newName)}
                     onDelete={() => onDeleteSession?.(session.id)}
+                    onShare={onShareSession ? () => onShareSession(session.id) : undefined}
+                    onUpdateShare={onUpdateShare ? () => onUpdateShare(session.id) : undefined}
+                    onRevokeShare={onRevokeShare ? () => onRevokeShare(session.id) : undefined}
                   />
                 </div>
               )}
