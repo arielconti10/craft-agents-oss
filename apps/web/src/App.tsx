@@ -10,7 +10,10 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, usePlatformAPI, usePlatformCapabilities } from './contexts/PlatformContext'
 import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './pages/ChatPage'
-import type { Session, WorkspaceSettings } from '@craft-agent/shared/platform'
+import { SettingsPage } from './pages/SettingsPage'
+import { SourceDetailPage } from './pages/SourceDetailPage'
+import { SkillDetailPage } from './pages/SkillDetailPage'
+import type { Session } from '@craft-agent/shared/platform'
 import type { LoadedSource } from '@craft-agent/shared/sources/types'
 import type { LoadedSkill } from '@craft-agent/shared/skills/types'
 import { Spinner } from '@craft-agent/ui'
@@ -102,11 +105,8 @@ function MainApp() {
 
   // Skills state
   const [skills, setSkills] = useState<LoadedSkill[]>([])
+  const [selectedSkill, setSelectedSkill] = useState<LoadedSkill | null>(null)
   const [isLoadingSkills, setIsLoadingSkills] = useState(false)
-
-  // Settings state
-  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | null>(null)
-  const [isLoadingSettings, setIsLoadingSettings] = useState(false)
 
   // Current workspace ID
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
@@ -158,17 +158,6 @@ function MainApp() {
         .finally(() => setIsLoadingSkills(false))
     }
   }, [activeSection, workspaceId, api, skills.length])
-
-  // Load settings when section changes
-  useEffect(() => {
-    if (activeSection === 'settings' && workspaceId && !workspaceSettings) {
-      setIsLoadingSettings(true)
-      api.getWorkspaceSettings(workspaceId)
-        .then(setWorkspaceSettings)
-        .catch(console.error)
-        .finally(() => setIsLoadingSettings(false))
-    }
-  }, [activeSection, workspaceId, api, workspaceSettings])
 
   // Subscribe to session events
   useEffect(() => {
@@ -225,7 +214,7 @@ function MainApp() {
   // Session action handlers
   const handleStatusChange = useCallback(async (sessionId: string, status: SessionStatus) => {
     try {
-      await api.updateSession(sessionId, { todoState: status })
+      await api.sessionCommand(sessionId, { type: 'setTodoState', state: status })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, todoState: status } : s
       ))
@@ -239,7 +228,7 @@ function MainApp() {
 
   const handleFlagSession = useCallback(async (sessionId: string) => {
     try {
-      await api.updateSession(sessionId, { isFlagged: true })
+      await api.sessionCommand(sessionId, { type: 'flag' })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, isFlagged: true } : s
       ))
@@ -253,7 +242,7 @@ function MainApp() {
 
   const handleUnflagSession = useCallback(async (sessionId: string) => {
     try {
-      await api.updateSession(sessionId, { isFlagged: false })
+      await api.sessionCommand(sessionId, { type: 'unflag' })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, isFlagged: false } : s
       ))
@@ -267,7 +256,7 @@ function MainApp() {
 
   const handleMarkUnread = useCallback(async (sessionId: string) => {
     try {
-      await api.updateSession(sessionId, { lastReadMessageId: undefined })
+      await api.sessionCommand(sessionId, { type: 'markUnread' })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, lastReadMessageId: undefined } : s
       ))
@@ -278,7 +267,7 @@ function MainApp() {
 
   const handleRenameSession = useCallback(async (sessionId: string, newName: string) => {
     try {
-      await api.updateSession(sessionId, { name: newName })
+      await api.sessionCommand(sessionId, { type: 'rename', name: newName })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, name: newName } : s
       ))
@@ -307,16 +296,82 @@ function MainApp() {
     }
   }, [api, selectedSession?.id, sessions, handleSelectSession])
 
-  const handleUpdateSessionMetadata = useCallback(async (updates: { name?: string; notes?: string }) => {
+  // Share session
+  const handleShareSession = useCallback(async (sessionId: string): Promise<{ success: boolean; url?: string; error?: string }> => {
+    try {
+      const result = await api.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
+      if (result?.success && result.url) {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, sharedUrl: result.url } : s
+        ))
+        if (selectedSession?.id === sessionId) {
+          setSelectedSession(prev => prev ? { ...prev, sharedUrl: result.url } : null)
+        }
+        return { success: true, url: result.url }
+      }
+      return { success: false, error: result?.error || 'Failed to share session' }
+    } catch (error) {
+      console.error('Failed to share session:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to share session' }
+    }
+  }, [api, selectedSession?.id])
+
+  // Update share
+  const handleUpdateShare = useCallback(async (sessionId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const result = await api.sessionCommand(sessionId, { type: 'updateShare' }) as { success: boolean; error?: string } | undefined
+      return result || { success: false, error: 'No response' }
+    } catch (error) {
+      console.error('Failed to update share:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update share' }
+    }
+  }, [api])
+
+  // Revoke share
+  const handleRevokeShare = useCallback(async (sessionId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const result = await api.sessionCommand(sessionId, { type: 'revokeShare' }) as { success: boolean; error?: string } | undefined
+      if (result?.success) {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, sharedUrl: undefined, sharedId: undefined } : s
+        ))
+        if (selectedSession?.id === sessionId) {
+          setSelectedSession(prev => prev ? { ...prev, sharedUrl: undefined, sharedId: undefined } : null)
+        }
+      }
+      return result || { success: false, error: 'No response' }
+    } catch (error) {
+      console.error('Failed to revoke share:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to revoke share' }
+    }
+  }, [api, selectedSession?.id])
+
+  // Rename session from right sidebar
+  const handleRenameFromSidebar = useCallback(async (name: string) => {
     if (!selectedSession) return
     try {
-      await api.updateSession(selectedSession.id, updates)
+      await api.sessionCommand(selectedSession.id, { type: 'rename', name })
       setSessions(prev => prev.map(s =>
-        s.id === selectedSession.id ? { ...s, ...updates } : s
+        s.id === selectedSession.id ? { ...s, name } : s
       ))
-      setSelectedSession(prev => prev ? { ...prev, ...updates } : null)
+      setSelectedSession(prev => prev ? { ...prev, name } : null)
     } catch (error) {
-      console.error('Failed to update session metadata:', error)
+      console.error('Failed to rename session:', error)
+    }
+  }, [api, selectedSession])
+
+  // Toggle flag for selected session
+  const handleToggleFlagFromSidebar = useCallback(async () => {
+    if (!selectedSession) return
+    try {
+      const newFlagState = !selectedSession.isFlagged
+      await api.sessionCommand(selectedSession.id, { type: newFlagState ? 'flag' : 'unflag' })
+      setSessions(prev => prev.map(s =>
+        s.id === selectedSession.id ? { ...s, isFlagged: newFlagState } : s
+      ))
+      setSelectedSession(prev => prev ? { ...prev, isFlagged: newFlagState } : null)
+    } catch (error) {
+      console.error('Failed to toggle flag:', error)
     }
   }, [api, selectedSession])
 
@@ -349,6 +404,7 @@ function MainApp() {
   // Check if we should show the detail view
   const hasDetailView = (activeSection === 'chats' || activeSection === 'flagged') && selectedSession
     || activeSection === 'sources' && selectedSource
+    || activeSection === 'skills' && selectedSkill
     || activeSection === 'settings'
 
   // Platform info string
@@ -415,7 +471,12 @@ function MainApp() {
               setShowListPanel(false)
             }}
             skills={skills}
+            selectedSkill={selectedSkill}
             isLoadingSkills={isLoadingSkills}
+            onSelectSkill={(skill) => {
+              setSelectedSkill(skill)
+              setShowListPanel(false)
+            }}
             onSettingsSelect={() => setShowListPanel(false)}
             platformInfo={platformInfo}
             onSessionStatusChange={handleStatusChange}
@@ -424,6 +485,9 @@ function MainApp() {
             onMarkUnread={handleMarkUnread}
             onRenameSession={handleRenameSession}
             onDeleteSession={handleDeleteSession}
+            onShareSession={handleShareSession}
+            onUpdateShare={handleUpdateShare}
+            onRevokeShare={handleRevokeShare}
           />
 
           {/* Main Content Panel */}
@@ -446,13 +510,11 @@ function MainApp() {
                 />
               </div>
             ) : activeSection === 'sources' && selectedSource ? (
-              <SourceDetail source={selectedSource} workspaceId={workspaceId} />
+              <SourceDetailPage source={selectedSource} workspaceId={workspaceId} />
+            ) : activeSection === 'skills' && selectedSkill ? (
+              <SkillDetailPage skill={selectedSkill} workspaceId={workspaceId} />
             ) : activeSection === 'settings' ? (
-              <SettingsDetail
-                settings={workspaceSettings}
-                isLoading={isLoadingSettings}
-                workspaceId={workspaceId}
-              />
+              <SettingsPage workspaceId={workspaceId} />
             ) : (
               <EmptyState section={activeSection} onNewChat={handleNewSession} />
             )}
@@ -463,7 +525,8 @@ function MainApp() {
             session={selectedSession}
             isOpen={isRightSidebarOpen}
             onClose={() => setIsRightSidebarOpen(false)}
-            onUpdateSession={handleUpdateSessionMetadata}
+            onRenameSession={handleRenameFromSidebar}
+            onToggleFlag={handleToggleFlagFromSidebar}
           />
         </div>
       </SidebarInset>
@@ -556,7 +619,9 @@ function NavigatorPanel({
   isLoadingSources,
   onSelectSource,
   skills,
+  selectedSkill,
   isLoadingSkills,
+  onSelectSkill,
   onSettingsSelect,
   platformInfo,
   onSessionStatusChange,
@@ -565,6 +630,9 @@ function NavigatorPanel({
   onMarkUnread,
   onRenameSession,
   onDeleteSession,
+  onShareSession,
+  onUpdateShare,
+  onRevokeShare,
 }: {
   activeSection: NavSection
   selectedStatus: SessionStatus | 'all'
@@ -582,7 +650,9 @@ function NavigatorPanel({
   isLoadingSources: boolean
   onSelectSource: (source: LoadedSource) => void
   skills: LoadedSkill[]
+  selectedSkill: LoadedSkill | null
   isLoadingSkills: boolean
+  onSelectSkill: (skill: LoadedSkill) => void
   onSettingsSelect: () => void
   platformInfo: string
   onSessionStatusChange?: (sessionId: string, status: SessionStatus) => void
@@ -591,6 +661,9 @@ function NavigatorPanel({
   onMarkUnread?: (sessionId: string) => void
   onRenameSession?: (sessionId: string, newName: string) => void
   onDeleteSession?: (sessionId: string) => void
+  onShareSession?: (sessionId: string) => Promise<{ success: boolean; url?: string; error?: string }>
+  onUpdateShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  onRevokeShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
 }) {
   return (
     <div className={`${
@@ -683,6 +756,9 @@ function NavigatorPanel({
             onMarkUnread={onMarkUnread}
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
+            onShareSession={onShareSession}
+            onUpdateShare={onUpdateShare}
+            onRevokeShare={onRevokeShare}
           />
         )}
 
@@ -700,6 +776,9 @@ function NavigatorPanel({
             onMarkUnread={onMarkUnread}
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
+            onShareSession={onShareSession}
+            onUpdateShare={onUpdateShare}
+            onRevokeShare={onRevokeShare}
           />
         )}
 
@@ -717,7 +796,9 @@ function NavigatorPanel({
         {activeSection === 'skills' && (
           <SkillsList
             skills={skills}
+            selectedSkill={selectedSkill}
             isLoading={isLoadingSkills}
+            onSelect={onSelectSkill}
           />
         )}
 
@@ -752,6 +833,9 @@ function SessionList({
   onMarkUnread,
   onRenameSession,
   onDeleteSession,
+  onShareSession,
+  onUpdateShare,
+  onRevokeShare,
 }: {
   sessions: Session[]
   selectedSession: Session | null
@@ -764,6 +848,9 @@ function SessionList({
   onMarkUnread?: (sessionId: string) => void
   onRenameSession?: (sessionId: string, newName: string) => void
   onDeleteSession?: (sessionId: string) => void
+  onShareSession?: (sessionId: string) => Promise<{ success: boolean; url?: string; error?: string }>
+  onUpdateShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  onRevokeShare?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
 }) {
   if (isLoading) {
     return (
@@ -777,7 +864,7 @@ function SessionList({
     return <p className="text-center text-foreground-40 py-8 text-sm">{emptyMessage}</p>
   }
 
-  const hasSessionActions = onStatusChange || onFlagSession || onDeleteSession
+  const hasSessionActions = onStatusChange || onFlagSession || onDeleteSession || onShareSession
 
   return (
     <ul className="px-2 py-1">
@@ -839,12 +926,16 @@ function SessionList({
                     hasMessages={hasMessages}
                     hasUnreadMessages={hasUnreadMessages}
                     currentStatus={status}
+                    sharedUrl={session.sharedUrl}
                     onStatusChange={(newStatus) => onStatusChange?.(session.id, newStatus)}
                     onFlag={() => onFlagSession?.(session.id)}
                     onUnflag={() => onUnflagSession?.(session.id)}
                     onMarkUnread={() => onMarkUnread?.(session.id)}
                     onRename={(newName) => onRenameSession?.(session.id, newName)}
                     onDelete={() => onDeleteSession?.(session.id)}
+                    onShare={onShareSession ? () => onShareSession(session.id) : undefined}
+                    onUpdateShare={onUpdateShare ? () => onUpdateShare(session.id) : undefined}
+                    onRevokeShare={onRevokeShare ? () => onRevokeShare(session.id) : undefined}
                   />
                 </div>
               )}
@@ -945,10 +1036,14 @@ function SourceStatusBadge({ source, isSelected }: { source: LoadedSource; isSel
  */
 function SkillsList({
   skills,
+  selectedSkill,
   isLoading,
+  onSelect,
 }: {
   skills: LoadedSkill[]
+  selectedSkill: LoadedSkill | null
   isLoading: boolean
+  onSelect: (skill: LoadedSkill) => void
 }) {
   if (isLoading) {
     return (
@@ -974,17 +1069,32 @@ function SkillsList({
     <ul className="px-2 py-1">
       {skills.map((skill) => (
         <li key={skill.slug}>
-          <div className="px-3 py-3 md:py-2.5 rounded-lg hover:bg-foreground/5 active:bg-foreground/10 transition-colors">
+          <button
+            onClick={() => onSelect(skill)}
+            className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
+              selectedSkill?.slug === skill.slug
+                ? 'bg-accent text-white'
+                : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
+            }`}
+          >
             <div className="flex items-center gap-2">
-              <Wand2 className="w-4 h-4 text-accent shrink-0" />
-              <span className="font-medium text-sm text-foreground">{skill.metadata.name}</span>
+              {skill.metadata.icon && /^\p{Emoji}/u.test(skill.metadata.icon) ? (
+                <span className="text-sm shrink-0">{skill.metadata.icon}</span>
+              ) : (
+                <Wand2 className={`w-4 h-4 shrink-0 ${
+                  selectedSkill?.slug === skill.slug ? 'text-white' : 'text-accent'
+                }`} />
+              )}
+              <span className="font-medium text-sm truncate">{skill.metadata.name}</span>
             </div>
             {skill.metadata.description && (
-              <p className="text-xs text-foreground-50 mt-0.5 line-clamp-2">
+              <p className={`text-xs mt-0.5 line-clamp-2 ${
+                selectedSkill?.slug === skill.slug ? 'text-white/70' : 'text-foreground-50'
+              }`}>
                 {skill.metadata.description}
               </p>
             )}
-          </div>
+          </button>
         </li>
       ))}
     </ul>
@@ -1018,138 +1128,6 @@ function SettingsList({ onSelect }: { onSelect?: () => void }) {
         </li>
       ))}
     </ul>
-  )
-}
-
-/**
- * Source detail panel
- */
-function SourceDetail({ source, workspaceId }: { source: LoadedSource; workspaceId: string | null }) {
-  const api = usePlatformAPI()
-  const [tools, setTools] = useState<Array<{ name: string; description?: string; allowed: boolean }>>([])
-  const [isLoadingTools, setIsLoadingTools] = useState(false)
-
-  useEffect(() => {
-    if (workspaceId && source.config.slug) {
-      setIsLoadingTools(true)
-      api.getMcpTools(workspaceId, source.config.slug)
-        .then(result => {
-          if (result.success && result.tools) {
-            setTools(result.tools)
-          }
-        })
-        .catch(console.error)
-        .finally(() => setIsLoadingTools(false))
-    }
-  }, [api, workspaceId, source.config.slug])
-
-  return (
-    <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-4 md:p-8">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
-            <Plug className="w-6 h-6 text-accent" />
-          </div>
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-foreground">{source.config.name}</h1>
-            <p className="text-foreground-50">{source.config.type === 'mcp' ? 'MCP Server' : 'API Source'}</p>
-          </div>
-        </div>
-
-        {source.config.tagline && (
-          <p className="text-foreground-70 mb-6">{source.config.tagline}</p>
-        )}
-
-        <div className="bg-foreground-2 rounded-xl p-4 md:p-6">
-          <h2 className="font-semibold text-foreground mb-4">Available Tools</h2>
-          {isLoadingTools ? (
-            <div className="flex items-center gap-2 text-foreground-50">
-              <Spinner className="text-sm" />
-              <span>Loading tools...</span>
-            </div>
-          ) : tools.length === 0 ? (
-            <p className="text-foreground-40 text-sm">No tools available</p>
-          ) : (
-            <ul className="space-y-2">
-              {tools.map((tool) => (
-                <li key={tool.name} className="flex items-start gap-3 p-2 rounded-lg bg-foreground/5">
-                  <div className={`w-2 h-2 rounded-full mt-1.5 ${tool.allowed ? 'bg-success' : 'bg-foreground-30'}`} />
-                  <div>
-                    <div className="font-medium text-sm text-foreground">{tool.name}</div>
-                    {tool.description && (
-                      <p className="text-xs text-foreground-50 mt-0.5">{tool.description}</p>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Settings detail panel
- */
-function SettingsDetail({
-  settings,
-  isLoading,
-  workspaceId,
-}: {
-  settings: WorkspaceSettings | null
-  isLoading: boolean
-  workspaceId: string | null
-}) {
-  if (isLoading) {
-    return (
-      <div className="flex-1 bg-foreground-1.5 flex items-center justify-center">
-        <Spinner className="text-2xl text-foreground-30" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-4 md:p-8">
-        <h1 className="text-xl md:text-2xl font-bold text-foreground mb-6">Settings</h1>
-
-        {/* Workspace Settings */}
-        <div className="bg-foreground-2 rounded-xl p-4 md:p-6 mb-6">
-          <h2 className="font-semibold text-foreground mb-4">Workspace</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Name</label>
-              <p className="text-foreground">{settings?.name || 'Default Workspace'}</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Default Model</label>
-              <p className="text-foreground">{settings?.model || 'claude-sonnet-4-20250514'}</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Permission Mode</label>
-              <p className="text-foreground capitalize">{settings?.permissionMode || 'ask'}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* App Settings */}
-        <div className="bg-foreground-2 rounded-xl p-4 md:p-6">
-          <h2 className="font-semibold text-foreground mb-4">App</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Theme</label>
-              <p className="text-foreground">System (Auto)</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Platform</label>
-              <p className="text-foreground">Web Edition</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   )
 }
 

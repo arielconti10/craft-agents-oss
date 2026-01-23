@@ -14,7 +14,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { usePlatformAPI } from '../contexts/PlatformContext'
-import type { Session, SessionEvent, FileAttachment, PermissionMode } from '@craft-agent/shared/platform'
+import type { Session, SessionEvent, FileAttachment, PermissionMode, PermissionRequest, CredentialRequest, CredentialResponse } from '@craft-agent/shared/platform'
 import type { StoredSession, StoredMessage, Message } from '@craft-agent/core'
 import { MODELS, getModelShortName, DEFAULT_MODEL } from '@craft-agent/shared/config/models'
 import { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/mode-types'
@@ -42,6 +42,8 @@ import {
   File,
 } from 'lucide-react'
 import { useEscapeInterrupt, EscapeInterruptOverlay } from '../hooks/useEscapeInterrupt'
+import { PermissionRequestCard } from '../components/chat/PermissionRequestCard'
+import { CredentialRequestCard } from '../components/chat/CredentialRequestCard'
 
 interface ChatPageProps {
   session: Session
@@ -191,6 +193,14 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   // File attachments
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
 
+  // Permission request state
+  const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
+  const [isRespondingToPermission, setIsRespondingToPermission] = useState(false)
+
+  // Credential request state
+  const [pendingCredential, setPendingCredential] = useState<CredentialRequest | null>(null)
+  const [isRespondingToCredential, setIsRespondingToCredential] = useState(false)
+
   // Double-Esc interrupt handler
   const { isWaitingForSecondEsc } = useEscapeInterrupt({
     enabled: isProcessing,
@@ -207,6 +217,10 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     setPermissionMode(session.permissionMode || 'ask')
     setCurrentModel(session.model || DEFAULT_MODEL)
     setAttachments([])
+    setPendingPermission(null)
+    setIsRespondingToPermission(false)
+    setPendingCredential(null)
+    setIsRespondingToCredential(false)
   }, [session.id, session.isProcessing, session.permissionMode, session.model])
 
   // Auto-resize textarea
@@ -287,14 +301,81 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setPermissionMode(event.permissionMode)
           break
 
+        case 'permission_request':
+          // Show permission request UI
+          setPendingPermission(event.request)
+          break
+
+        case 'credential_request':
+          // Show credential request UI
+          setPendingCredential(event.request)
+          break
+
         case 'session_model_changed':
           if (event.model) setCurrentModel(event.model)
+          break
+
+        case 'title_generated':
+          // Update session title in parent
+          if (onSessionUpdate && event.title) {
+            onSessionUpdate({ ...session, name: event.title })
+          }
+          break
+
+        case 'session_flagged':
+          // Update session flag status in parent
+          if (onSessionUpdate) {
+            onSessionUpdate({ ...session, isFlagged: true })
+          }
+          break
+
+        case 'session_unflagged':
+          // Update session flag status in parent
+          if (onSessionUpdate) {
+            onSessionUpdate({ ...session, isFlagged: false })
+          }
+          break
+
+        case 'todo_state_changed':
+          // Update session todo state in parent
+          if (onSessionUpdate && event.todoState) {
+            onSessionUpdate({ ...session, todoState: event.todoState })
+          }
+          break
+
+        case 'usage_update':
+          // Update token usage in parent (merge with defaults for required fields)
+          if (onSessionUpdate && event.tokenUsage) {
+            const baseUsage = session.tokenUsage ?? {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              contextTokens: 0,
+              costUsd: 0,
+            }
+            onSessionUpdate({
+              ...session,
+              tokenUsage: {
+                ...baseUsage,
+                inputTokens: event.tokenUsage.inputTokens ?? baseUsage.inputTokens,
+                contextWindow: event.tokenUsage.contextWindow,
+              }
+            })
+          }
+          break
+
+        case 'status':
+        case 'info':
+          // Log status/info messages (could add a toast notification in the future)
+          console.log(`[${event.type}]`, event.message)
           break
 
         case 'complete':
           setIsProcessing(false)
           setStreamingMessages([])
           setAttachments([])
+          setPendingPermission(null)
+          setPendingCredential(null)
           api.getSessionMessages(session.id).then(updated => {
             if (updated && onSessionUpdate) {
               onSessionUpdate(updated)
@@ -305,12 +386,16 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
         case 'error':
           setIsProcessing(false)
           setStreamingMessages([])
+          setPendingPermission(null)
+          setPendingCredential(null)
           console.error('Session error:', event.error)
           break
 
         case 'interrupted':
           setIsProcessing(false)
           setStreamingMessages([])
+          setPendingPermission(null)
+          setPendingCredential(null)
           break
       }
     })
@@ -379,6 +464,67 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     setOverlay({ type: null })
   }, [])
 
+  // Handle permission response
+  const handlePermissionResponse = useCallback(async (allowed: boolean, alwaysAllow: boolean) => {
+    if (!pendingPermission) return
+
+    setIsRespondingToPermission(true)
+    try {
+      await api.respondToPermission(
+        session.id,
+        pendingPermission.requestId,
+        allowed,
+        alwaysAllow
+      )
+      setPendingPermission(null)
+    } catch (error) {
+      console.error('Failed to respond to permission:', error)
+    } finally {
+      setIsRespondingToPermission(false)
+    }
+  }, [api, session.id, pendingPermission])
+
+  const handlePermissionAllow = useCallback(() => {
+    handlePermissionResponse(true, false)
+  }, [handlePermissionResponse])
+
+  const handlePermissionAlwaysAllow = useCallback(() => {
+    handlePermissionResponse(true, true)
+  }, [handlePermissionResponse])
+
+  const handlePermissionDeny = useCallback(() => {
+    handlePermissionResponse(false, false)
+  }, [handlePermissionResponse])
+
+  // Handle credential response
+  const handleCredentialSubmit = useCallback(async (response: CredentialResponse) => {
+    if (!pendingCredential) return
+
+    setIsRespondingToCredential(true)
+    try {
+      await api.respondToCredential(
+        session.id,
+        pendingCredential.requestId,
+        response
+      )
+      setPendingCredential(null)
+    } catch (error) {
+      console.error('Failed to respond to credential:', error)
+    } finally {
+      setIsRespondingToCredential(false)
+    }
+  }, [api, session.id, pendingCredential])
+
+  const handleCredentialCancel = useCallback(() => {
+    if (!pendingCredential) return
+
+    // Send cancelled response
+    handleCredentialSubmit({
+      type: 'credential',
+      cancelled: true,
+    })
+  }, [pendingCredential, handleCredentialSubmit])
+
   // Handle permission mode change
   const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
     setPermissionMode(mode)
@@ -407,7 +553,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     Array.from(files).forEach(file => {
       const reader = new FileReader()
       reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1]
+        const base64 = (reader.result as string).split(',')[1] || ''
         const isImage = file.type.startsWith('image/')
         const isText = file.type.startsWith('text/') ||
           ['.txt', '.md', '.json', '.js', '.ts', '.py', '.html', '.css'].some(ext => file.name.endsWith(ext))
@@ -418,7 +564,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           name: file.name,
           mimeType: file.type || 'application/octet-stream',
           base64: isImage ? base64 : undefined,
-          text: isText ? atob(base64) : undefined,
+          text: isText && base64 ? atob(base64) : undefined,
           size: file.size,
         }
         setAttachments(prev => [...prev, attachment])
@@ -581,6 +727,35 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   // Footer component (input area)
   const footer = (
     <div className="bg-background/50 border-t border-foreground/5">
+      {/* Permission request card */}
+      {pendingPermission && (
+        <div className="px-4 md:px-6 py-3 border-b border-foreground/5">
+          <div className={`${CHAT_LAYOUT.maxWidth} mx-auto`}>
+            <PermissionRequestCard
+              request={pendingPermission}
+              onAllow={handlePermissionAllow}
+              onAlwaysAllow={handlePermissionAlwaysAllow}
+              onDeny={handlePermissionDeny}
+              isResponding={isRespondingToPermission}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Credential request card */}
+      {pendingCredential && (
+        <div className="px-4 md:px-6 py-3 border-b border-foreground/5">
+          <div className={`${CHAT_LAYOUT.maxWidth} mx-auto`}>
+            <CredentialRequestCard
+              request={pendingCredential}
+              onSubmit={handleCredentialSubmit}
+              onCancel={handleCredentialCancel}
+              isSubmitting={isRespondingToCredential}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Attachment preview */}
       {attachments.length > 0 && (
         <div className="px-4 md:px-6 py-2 border-b border-foreground/5 flex flex-wrap gap-2">
