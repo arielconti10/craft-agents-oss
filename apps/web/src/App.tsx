@@ -11,6 +11,8 @@ import { useAuth, usePlatformAPI, usePlatformCapabilities } from './contexts/Pla
 import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './pages/ChatPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { SourceDetailPage } from './pages/SourceDetailPage'
+import { SkillDetailPage } from './pages/SkillDetailPage'
 import type { Session } from '@craft-agent/shared/platform'
 import type { LoadedSource } from '@craft-agent/shared/sources/types'
 import type { LoadedSkill } from '@craft-agent/shared/skills/types'
@@ -104,6 +106,7 @@ function MainApp() {
 
   // Skills state
   const [skills, setSkills] = useState<LoadedSkill[]>([])
+  const [selectedSkill, setSelectedSkill] = useState<LoadedSkill | null>(null)
   const [isLoadingSkills, setIsLoadingSkills] = useState(false)
 
   // Current workspace ID
@@ -352,6 +355,7 @@ function MainApp() {
   // Check if we should show the detail view
   const hasDetailView = (activeSection === 'chats' || activeSection === 'flagged') && selectedSession
     || activeSection === 'sources' && selectedSource
+    || activeSection === 'skills' && selectedSkill
     || activeSection === 'settings'
 
   // Platform info string
@@ -409,7 +413,12 @@ function MainApp() {
               setShowListPanel(false)
             }}
             skills={skills}
+            selectedSkill={selectedSkill}
             isLoadingSkills={isLoadingSkills}
+            onSelectSkill={(skill) => {
+              setSelectedSkill(skill)
+              setShowListPanel(false)
+            }}
             onSettingsSelect={() => setShowListPanel(false)}
             platformInfo={platformInfo}
             onSessionStatusChange={handleStatusChange}
@@ -440,7 +449,9 @@ function MainApp() {
                 />
               </div>
             ) : activeSection === 'sources' && selectedSource ? (
-              <SourceDetail source={selectedSource} workspaceId={workspaceId} />
+              <SourceDetailPage source={selectedSource} workspaceId={workspaceId} />
+            ) : activeSection === 'skills' && selectedSkill ? (
+              <SkillDetailPage skill={selectedSkill} workspaceId={workspaceId} />
             ) : activeSection === 'settings' ? (
               <SettingsPage workspaceId={workspaceId} />
             ) : (
@@ -519,7 +530,9 @@ function NavigatorPanel({
   isLoadingSources,
   onSelectSource,
   skills,
+  selectedSkill,
   isLoadingSkills,
+  onSelectSkill,
   onSettingsSelect,
   platformInfo,
   onSessionStatusChange,
@@ -545,7 +558,9 @@ function NavigatorPanel({
   isLoadingSources: boolean
   onSelectSource: (source: LoadedSource) => void
   skills: LoadedSkill[]
+  selectedSkill: LoadedSkill | null
   isLoadingSkills: boolean
+  onSelectSkill: (skill: LoadedSkill) => void
   onSettingsSelect: () => void
   platformInfo: string
   onSessionStatusChange?: (sessionId: string, status: SessionStatus) => void
@@ -680,7 +695,9 @@ function NavigatorPanel({
         {activeSection === 'skills' && (
           <SkillsList
             skills={skills}
+            selectedSkill={selectedSkill}
             isLoading={isLoadingSkills}
+            onSelect={onSelectSkill}
           />
         )}
 
@@ -908,10 +925,14 @@ function SourceStatusBadge({ source, isSelected }: { source: LoadedSource; isSel
  */
 function SkillsList({
   skills,
+  selectedSkill,
   isLoading,
+  onSelect,
 }: {
   skills: LoadedSkill[]
+  selectedSkill: LoadedSkill | null
   isLoading: boolean
+  onSelect: (skill: LoadedSkill) => void
 }) {
   if (isLoading) {
     return (
@@ -937,17 +958,32 @@ function SkillsList({
     <ul className="px-2 py-1">
       {skills.map((skill) => (
         <li key={skill.slug}>
-          <div className="px-3 py-3 md:py-2.5 rounded-lg hover:bg-foreground/5 active:bg-foreground/10 transition-colors">
+          <button
+            onClick={() => onSelect(skill)}
+            className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
+              selectedSkill?.slug === skill.slug
+                ? 'bg-accent text-white'
+                : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
+            }`}
+          >
             <div className="flex items-center gap-2">
-              <Wand2 className="w-4 h-4 text-accent shrink-0" />
-              <span className="font-medium text-sm text-foreground">{skill.metadata.name}</span>
+              {skill.metadata.icon && /^\p{Emoji}/u.test(skill.metadata.icon) ? (
+                <span className="text-sm shrink-0">{skill.metadata.icon}</span>
+              ) : (
+                <Wand2 className={`w-4 h-4 shrink-0 ${
+                  selectedSkill?.slug === skill.slug ? 'text-white' : 'text-accent'
+                }`} />
+              )}
+              <span className="font-medium text-sm truncate">{skill.metadata.name}</span>
             </div>
             {skill.metadata.description && (
-              <p className="text-xs text-foreground-50 mt-0.5 line-clamp-2">
+              <p className={`text-xs mt-0.5 line-clamp-2 ${
+                selectedSkill?.slug === skill.slug ? 'text-white/70' : 'text-foreground-50'
+              }`}>
                 {skill.metadata.description}
               </p>
             )}
-          </div>
+          </button>
         </li>
       ))}
     </ul>
@@ -981,75 +1017,6 @@ function SettingsList({ onSelect }: { onSelect?: () => void }) {
         </li>
       ))}
     </ul>
-  )
-}
-
-/**
- * Source detail panel
- */
-function SourceDetail({ source, workspaceId }: { source: LoadedSource; workspaceId: string | null }) {
-  const api = usePlatformAPI()
-  const [tools, setTools] = useState<Array<{ name: string; description?: string; allowed: boolean }>>([])
-  const [isLoadingTools, setIsLoadingTools] = useState(false)
-
-  useEffect(() => {
-    if (workspaceId && source.config.slug) {
-      setIsLoadingTools(true)
-      api.getMcpTools(workspaceId, source.config.slug)
-        .then(result => {
-          if (result.success && result.tools) {
-            setTools(result.tools)
-          }
-        })
-        .catch(console.error)
-        .finally(() => setIsLoadingTools(false))
-    }
-  }, [api, workspaceId, source.config.slug])
-
-  return (
-    <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-4 md:p-8">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
-            <Plug className="w-6 h-6 text-accent" />
-          </div>
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-foreground">{source.config.name}</h1>
-            <p className="text-foreground-50">{source.config.type === 'mcp' ? 'MCP Server' : 'API Source'}</p>
-          </div>
-        </div>
-
-        {source.config.tagline && (
-          <p className="text-foreground-70 mb-6">{source.config.tagline}</p>
-        )}
-
-        <div className="bg-foreground-2 rounded-xl p-4 md:p-6">
-          <h2 className="font-semibold text-foreground mb-4">Available Tools</h2>
-          {isLoadingTools ? (
-            <div className="flex items-center gap-2 text-foreground-50">
-              <Spinner className="text-sm" />
-              <span>Loading tools...</span>
-            </div>
-          ) : tools.length === 0 ? (
-            <p className="text-foreground-40 text-sm">No tools available</p>
-          ) : (
-            <ul className="space-y-2">
-              {tools.map((tool) => (
-                <li key={tool.name} className="flex items-start gap-3 p-2 rounded-lg bg-foreground/5">
-                  <div className={`w-2 h-2 rounded-full mt-1.5 ${tool.allowed ? 'bg-success' : 'bg-foreground-30'}`} />
-                  <div>
-                    <div className="font-medium text-sm text-foreground">{tool.name}</div>
-                    {tool.description && (
-                      <p className="text-xs text-foreground-50 mt-0.5">{tool.description}</p>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
   )
 }
 

@@ -3,14 +3,16 @@
  *
  * Manages app settings including:
  * - API key configuration
- * - Model selection
+ * - Workspace settings (model, permission mode, thinking level)
  * - Theme selection
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { usePlatformAPI } from '../contexts/PlatformContext'
-import { MODELS, DEFAULT_MODEL, getModelDisplayName } from '@craft-agent/shared/config/models'
-import type { BillingMethodInfo } from '@craft-agent/shared/platform'
+import { MODELS, DEFAULT_MODEL } from '@craft-agent/shared/config/models'
+import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/mode-types'
+import { THINKING_LEVELS, type ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
+import type { BillingMethodInfo, WorkspaceSettings } from '@craft-agent/shared/platform'
 import { Spinner } from '@craft-agent/ui'
 import {
   Key,
@@ -22,6 +24,9 @@ import {
   Bot,
   Settings,
   AlertTriangle,
+  Shield,
+  Brain,
+  Briefcase,
 } from 'lucide-react'
 
 interface SettingsPageProps {
@@ -35,6 +40,7 @@ export function SettingsPage({ workspaceId }: SettingsPageProps) {
   const [isLoadingBilling, setIsLoadingBilling] = useState(true)
   const [isLoadingModel, setIsLoadingModel] = useState(true)
   const [isLoadingTheme, setIsLoadingTheme] = useState(true)
+  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // API Key state
   const [billingInfo, setBillingInfo] = useState<BillingMethodInfo | null>(null)
@@ -51,6 +57,12 @@ export function SettingsPage({ workspaceId }: SettingsPageProps) {
   // Theme state
   const [selectedTheme, setSelectedTheme] = useState('system')
   const [isSavingTheme, setIsSavingTheme] = useState(false)
+
+  // Workspace settings state
+  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | null>(null)
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('think')
+  const [isSavingWorkspace, setIsSavingWorkspace] = useState(false)
 
   // Available themes
   const themes = [
@@ -89,6 +101,26 @@ export function SettingsPage({ workspaceId }: SettingsPageProps) {
       .catch(console.error)
       .finally(() => setIsLoadingTheme(false))
   }, [api])
+
+  // Load workspace settings
+  useEffect(() => {
+    if (workspaceId) {
+      api.getWorkspaceSettings(workspaceId)
+        .then(settings => {
+          setWorkspaceSettings(settings)
+          if (settings?.permissionMode) {
+            setPermissionMode(settings.permissionMode)
+          }
+          if (settings?.thinkingLevel) {
+            setThinkingLevel(settings.thinkingLevel)
+          }
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingWorkspace(false))
+    } else {
+      setIsLoadingWorkspace(false)
+    }
+  }, [api, workspaceId])
 
   // Test API connection
   const handleTestApiKey = useCallback(async () => {
@@ -153,7 +185,35 @@ export function SettingsPage({ workspaceId }: SettingsPageProps) {
     }
   }, [api])
 
-  const isLoading = isLoadingBilling || isLoadingModel || isLoadingTheme
+  // Save permission mode
+  const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
+    if (!workspaceId) return
+    setPermissionMode(mode)
+    setIsSavingWorkspace(true)
+    try {
+      await api.updateWorkspaceSetting(workspaceId, 'permissionMode', mode)
+    } catch (error) {
+      console.error('Failed to save permission mode:', error)
+    } finally {
+      setIsSavingWorkspace(false)
+    }
+  }, [api, workspaceId])
+
+  // Save thinking level
+  const handleThinkingLevelChange = useCallback(async (level: ThinkingLevel) => {
+    if (!workspaceId) return
+    setThinkingLevel(level)
+    setIsSavingWorkspace(true)
+    try {
+      await api.updateWorkspaceSetting(workspaceId, 'thinkingLevel', level)
+    } catch (error) {
+      console.error('Failed to save thinking level:', error)
+    } finally {
+      setIsSavingWorkspace(false)
+    }
+  }, [api, workspaceId])
+
+  const isLoading = isLoadingBilling || isLoadingModel || isLoadingTheme || isLoadingWorkspace
 
   if (isLoading) {
     return (
@@ -299,6 +359,92 @@ export function SettingsPage({ workspaceId }: SettingsPageProps) {
                 </button>
               )
             })}
+          </div>
+        </section>
+
+        {/* Workspace Settings Section */}
+        <section className="bg-foreground-2 rounded-xl p-4 md:p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Briefcase className="w-5 h-5 text-accent" />
+            <h2 className="font-semibold text-foreground">Workspace</h2>
+            {isSavingWorkspace && <Spinner className="text-sm text-foreground-50" />}
+          </div>
+
+          <div className="space-y-6">
+            {/* Permission Mode */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="w-4 h-4 text-foreground-50" />
+                <h3 className="text-sm font-medium text-foreground">Default Permission Mode</h3>
+              </div>
+              <p className="text-xs text-foreground-50 mb-3">
+                Controls how Claude asks for permission to use tools.
+              </p>
+              <div className="space-y-2">
+                {(['safe', 'ask', 'allow-all'] as PermissionMode[]).map((mode) => {
+                  const config = PERMISSION_MODE_CONFIG[mode]
+                  const isSelected = permissionMode === mode
+                  return (
+                    <button
+                      key={mode}
+                      onClick={() => handlePermissionModeChange(mode)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'border-accent bg-accent/10'
+                          : 'border-foreground/10 hover:bg-foreground/5'
+                      }`}
+                    >
+                      <svg
+                        className={`w-5 h-5 ${config.colorClass.text}`}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d={config.svgPath} />
+                      </svg>
+                      <div className="text-left flex-1">
+                        <div className="font-medium text-foreground">{config.displayName}</div>
+                        <div className="text-xs text-foreground-50">{config.description}</div>
+                      </div>
+                      {isSelected && <Check className="w-5 h-5 text-accent shrink-0" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Thinking Level */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Brain className="w-4 h-4 text-foreground-50" />
+                <h3 className="text-sm font-medium text-foreground">Default Thinking Level</h3>
+              </div>
+              <p className="text-xs text-foreground-50 mb-3">
+                Controls how much Claude thinks before responding.
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {THINKING_LEVELS.map((level) => {
+                  const isSelected = thinkingLevel === level.id
+                  return (
+                    <button
+                      key={level.id}
+                      onClick={() => handleThinkingLevelChange(level.id)}
+                      className={`flex flex-col items-center p-3 rounded-lg border transition-colors ${
+                        isSelected
+                          ? 'border-accent bg-accent/10'
+                          : 'border-foreground/10 hover:bg-foreground/5'
+                      }`}
+                    >
+                      <div className="font-medium text-foreground text-sm">{level.name}</div>
+                      {isSelected && <Check className="w-4 h-4 text-accent mt-1" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         </section>
 
