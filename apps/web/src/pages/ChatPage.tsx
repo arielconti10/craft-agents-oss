@@ -553,7 +553,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     Array.from(files).forEach(file => {
       const reader = new FileReader()
       reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1]
+        const base64 = (reader.result as string).split(',')[1] || ''
         const isImage = file.type.startsWith('image/')
         const isText = file.type.startsWith('text/') ||
           ['.txt', '.md', '.json', '.js', '.ts', '.py', '.html', '.css'].some(ext => file.name.endsWith(ext))
@@ -564,7 +564,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           name: file.name,
           mimeType: file.type || 'application/octet-stream',
           base64: isImage ? base64 : undefined,
-          text: isText ? atob(base64) : undefined,
+          text: isText && base64 ? atob(base64) : undefined,
           size: file.size,
         }
         setAttachments(prev => [...prev, attachment])

@@ -10,7 +10,8 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth, usePlatformAPI, usePlatformCapabilities } from './contexts/PlatformContext'
 import { LoginPage } from './pages/LoginPage'
 import { ChatPage } from './pages/ChatPage'
-import type { Session, WorkspaceSettings } from '@craft-agent/shared/platform'
+import { SettingsPage } from './pages/SettingsPage'
+import type { Session } from '@craft-agent/shared/platform'
 import type { LoadedSource } from '@craft-agent/shared/sources/types'
 import type { LoadedSkill } from '@craft-agent/shared/skills/types'
 import { Spinner } from '@craft-agent/ui'
@@ -105,10 +106,6 @@ function MainApp() {
   const [skills, setSkills] = useState<LoadedSkill[]>([])
   const [isLoadingSkills, setIsLoadingSkills] = useState(false)
 
-  // Settings state
-  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings | null>(null)
-  const [isLoadingSettings, setIsLoadingSettings] = useState(false)
-
   // Current workspace ID
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
 
@@ -159,17 +156,6 @@ function MainApp() {
         .finally(() => setIsLoadingSkills(false))
     }
   }, [activeSection, workspaceId, api, skills.length])
-
-  // Load settings when section changes
-  useEffect(() => {
-    if (activeSection === 'settings' && workspaceId && !workspaceSettings) {
-      setIsLoadingSettings(true)
-      api.getWorkspaceSettings(workspaceId)
-        .then(setWorkspaceSettings)
-        .catch(console.error)
-        .finally(() => setIsLoadingSettings(false))
-    }
-  }, [activeSection, workspaceId, api, workspaceSettings])
 
   // Subscribe to session events
   useEffect(() => {
@@ -226,7 +212,7 @@ function MainApp() {
   // Session action handlers
   const handleStatusChange = useCallback(async (sessionId: string, status: SessionStatus) => {
     try {
-      await api.updateSession(sessionId, { todoState: status })
+      await api.sessionCommand(sessionId, { type: 'setTodoState', state: status })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, todoState: status } : s
       ))
@@ -240,7 +226,7 @@ function MainApp() {
 
   const handleFlagSession = useCallback(async (sessionId: string) => {
     try {
-      await api.updateSession(sessionId, { isFlagged: true })
+      await api.sessionCommand(sessionId, { type: 'flag' })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, isFlagged: true } : s
       ))
@@ -254,7 +240,7 @@ function MainApp() {
 
   const handleUnflagSession = useCallback(async (sessionId: string) => {
     try {
-      await api.updateSession(sessionId, { isFlagged: false })
+      await api.sessionCommand(sessionId, { type: 'unflag' })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, isFlagged: false } : s
       ))
@@ -268,7 +254,7 @@ function MainApp() {
 
   const handleMarkUnread = useCallback(async (sessionId: string) => {
     try {
-      await api.updateSession(sessionId, { lastReadMessageId: undefined })
+      await api.sessionCommand(sessionId, { type: 'markUnread' })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, lastReadMessageId: undefined } : s
       ))
@@ -279,7 +265,7 @@ function MainApp() {
 
   const handleRenameSession = useCallback(async (sessionId: string, newName: string) => {
     try {
-      await api.updateSession(sessionId, { name: newName })
+      await api.sessionCommand(sessionId, { type: 'rename', name: newName })
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, name: newName } : s
       ))
@@ -308,16 +294,32 @@ function MainApp() {
     }
   }, [api, selectedSession?.id, sessions, handleSelectSession])
 
-  const handleUpdateSessionMetadata = useCallback(async (updates: { name?: string; notes?: string }) => {
+  // Rename session from right sidebar
+  const handleRenameFromSidebar = useCallback(async (name: string) => {
     if (!selectedSession) return
     try {
-      await api.updateSession(selectedSession.id, updates)
+      await api.sessionCommand(selectedSession.id, { type: 'rename', name })
       setSessions(prev => prev.map(s =>
-        s.id === selectedSession.id ? { ...s, ...updates } : s
+        s.id === selectedSession.id ? { ...s, name } : s
       ))
-      setSelectedSession(prev => prev ? { ...prev, ...updates } : null)
+      setSelectedSession(prev => prev ? { ...prev, name } : null)
     } catch (error) {
-      console.error('Failed to update session metadata:', error)
+      console.error('Failed to rename session:', error)
+    }
+  }, [api, selectedSession])
+
+  // Toggle flag for selected session
+  const handleToggleFlagFromSidebar = useCallback(async () => {
+    if (!selectedSession) return
+    try {
+      const newFlagState = !selectedSession.isFlagged
+      await api.sessionCommand(selectedSession.id, { type: newFlagState ? 'flag' : 'unflag' })
+      setSessions(prev => prev.map(s =>
+        s.id === selectedSession.id ? { ...s, isFlagged: newFlagState } : s
+      ))
+      setSelectedSession(prev => prev ? { ...prev, isFlagged: newFlagState } : null)
+    } catch (error) {
+      console.error('Failed to toggle flag:', error)
     }
   }, [api, selectedSession])
 
@@ -440,11 +442,7 @@ function MainApp() {
             ) : activeSection === 'sources' && selectedSource ? (
               <SourceDetail source={selectedSource} workspaceId={workspaceId} />
             ) : activeSection === 'settings' ? (
-              <SettingsDetail
-                settings={workspaceSettings}
-                isLoading={isLoadingSettings}
-                workspaceId={workspaceId}
-              />
+              <SettingsPage workspaceId={workspaceId} />
             ) : (
               <EmptyState section={activeSection} onNewChat={handleNewSession} />
             )}
@@ -455,7 +453,8 @@ function MainApp() {
             session={selectedSession}
             isOpen={isRightSidebarOpen}
             onClose={() => setIsRightSidebarOpen(false)}
-            onUpdateSession={handleUpdateSessionMetadata}
+            onRenameSession={handleRenameFromSidebar}
+            onToggleFlag={handleToggleFlagFromSidebar}
           />
         </div>
       </SidebarInset>
@@ -1048,69 +1047,6 @@ function SourceDetail({ source, workspaceId }: { source: LoadedSource; workspace
               ))}
             </ul>
           )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Settings detail panel
- */
-function SettingsDetail({
-  settings,
-  isLoading,
-  workspaceId,
-}: {
-  settings: WorkspaceSettings | null
-  isLoading: boolean
-  workspaceId: string | null
-}) {
-  if (isLoading) {
-    return (
-      <div className="flex-1 bg-foreground-1.5 flex items-center justify-center">
-        <Spinner className="text-2xl text-foreground-30" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-4 md:p-8">
-        <h1 className="text-xl md:text-2xl font-bold text-foreground mb-6">Settings</h1>
-
-        {/* Workspace Settings */}
-        <div className="bg-foreground-2 rounded-xl p-4 md:p-6 mb-6">
-          <h2 className="font-semibold text-foreground mb-4">Workspace</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Name</label>
-              <p className="text-foreground">{settings?.name || 'Default Workspace'}</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Default Model</label>
-              <p className="text-foreground">{settings?.model || 'claude-sonnet-4-20250514'}</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Permission Mode</label>
-              <p className="text-foreground capitalize">{settings?.permissionMode || 'ask'}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* App Settings */}
-        <div className="bg-foreground-2 rounded-xl p-4 md:p-6">
-          <h2 className="font-semibold text-foreground mb-4">App</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Theme</label>
-              <p className="text-foreground">System (Auto)</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground-70 mb-1">Platform</label>
-              <p className="text-foreground">Web Edition</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>
