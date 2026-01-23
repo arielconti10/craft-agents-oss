@@ -14,7 +14,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { usePlatformAPI } from '../contexts/PlatformContext'
-import type { Session, SessionEvent, FileAttachment, PermissionMode } from '@craft-agent/shared/platform'
+import type { Session, SessionEvent, FileAttachment, PermissionMode, PermissionRequest } from '@craft-agent/shared/platform'
 import type { StoredSession, StoredMessage, Message } from '@craft-agent/core'
 import { MODELS, getModelShortName, DEFAULT_MODEL } from '@craft-agent/shared/config/models'
 import { PERMISSION_MODE_CONFIG } from '@craft-agent/shared/agent/mode-types'
@@ -42,6 +42,7 @@ import {
   File,
 } from 'lucide-react'
 import { useEscapeInterrupt, EscapeInterruptOverlay } from '../hooks/useEscapeInterrupt'
+import { PermissionRequestCard } from '../components/chat/PermissionRequestCard'
 
 interface ChatPageProps {
   session: Session
@@ -191,6 +192,10 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   // File attachments
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
 
+  // Permission request state
+  const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
+  const [isRespondingToPermission, setIsRespondingToPermission] = useState(false)
+
   // Double-Esc interrupt handler
   const { isWaitingForSecondEsc } = useEscapeInterrupt({
     enabled: isProcessing,
@@ -207,6 +212,8 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
     setPermissionMode(session.permissionMode || 'ask')
     setCurrentModel(session.model || DEFAULT_MODEL)
     setAttachments([])
+    setPendingPermission(null)
+    setIsRespondingToPermission(false)
   }, [session.id, session.isProcessing, session.permissionMode, session.model])
 
   // Auto-resize textarea
@@ -287,6 +294,11 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setPermissionMode(event.permissionMode)
           break
 
+        case 'permission_request':
+          // Show permission request UI
+          setPendingPermission(event.request)
+          break
+
         case 'session_model_changed':
           if (event.model) setCurrentModel(event.model)
           break
@@ -295,6 +307,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           setIsProcessing(false)
           setStreamingMessages([])
           setAttachments([])
+          setPendingPermission(null)
           api.getSessionMessages(session.id).then(updated => {
             if (updated && onSessionUpdate) {
               onSessionUpdate(updated)
@@ -305,12 +318,14 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
         case 'error':
           setIsProcessing(false)
           setStreamingMessages([])
+          setPendingPermission(null)
           console.error('Session error:', event.error)
           break
 
         case 'interrupted':
           setIsProcessing(false)
           setStreamingMessages([])
+          setPendingPermission(null)
           break
       }
     })
@@ -378,6 +393,38 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   const handleCloseOverlay = useCallback(() => {
     setOverlay({ type: null })
   }, [])
+
+  // Handle permission response
+  const handlePermissionResponse = useCallback(async (allowed: boolean, alwaysAllow: boolean) => {
+    if (!pendingPermission) return
+
+    setIsRespondingToPermission(true)
+    try {
+      await api.respondToPermission(
+        session.id,
+        pendingPermission.requestId,
+        allowed,
+        alwaysAllow
+      )
+      setPendingPermission(null)
+    } catch (error) {
+      console.error('Failed to respond to permission:', error)
+    } finally {
+      setIsRespondingToPermission(false)
+    }
+  }, [api, session.id, pendingPermission])
+
+  const handlePermissionAllow = useCallback(() => {
+    handlePermissionResponse(true, false)
+  }, [handlePermissionResponse])
+
+  const handlePermissionAlwaysAllow = useCallback(() => {
+    handlePermissionResponse(true, true)
+  }, [handlePermissionResponse])
+
+  const handlePermissionDeny = useCallback(() => {
+    handlePermissionResponse(false, false)
+  }, [handlePermissionResponse])
 
   // Handle permission mode change
   const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -581,6 +628,21 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   // Footer component (input area)
   const footer = (
     <div className="bg-background/50 border-t border-foreground/5">
+      {/* Permission request card */}
+      {pendingPermission && (
+        <div className="px-4 md:px-6 py-3 border-b border-foreground/5">
+          <div className={`${CHAT_LAYOUT.maxWidth} mx-auto`}>
+            <PermissionRequestCard
+              request={pendingPermission}
+              onAllow={handlePermissionAllow}
+              onAlwaysAllow={handlePermissionAlwaysAllow}
+              onDeny={handlePermissionDeny}
+              isResponding={isRespondingToPermission}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Attachment preview */}
       {attachments.length > 0 && (
         <div className="px-4 md:px-6 py-2 border-b border-foreground/5 flex flex-wrap gap-2">
