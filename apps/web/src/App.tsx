@@ -27,6 +27,7 @@ import {
   STATUS_CONFIG,
   STATUS_ORDER,
 } from './components/app-sidebar'
+import { SessionMenu, RightSidebar } from './components/app-shell'
 import {
   Plug,
   Wand2,
@@ -40,6 +41,7 @@ import {
   CheckCircle,
   XCircle,
   Inbox,
+  PanelRight,
 } from 'lucide-react'
 
 export function App() {
@@ -85,6 +87,9 @@ function MainApp() {
 
   // Mobile UI state
   const [showListPanel, setShowListPanel] = useState(true)
+
+  // Right sidebar state
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false)
 
   // Sessions state
   const [sessions, setSessions] = useState<Session[]>([])
@@ -218,6 +223,104 @@ function MainApp() {
     setSelectedSession(updatedSession)
   }, [])
 
+  // Session action handlers
+  const handleStatusChange = useCallback(async (sessionId: string, status: SessionStatus) => {
+    try {
+      await api.updateSession(sessionId, { todoState: status })
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, todoState: status } : s
+      ))
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession(prev => prev ? { ...prev, todoState: status } : null)
+      }
+    } catch (error) {
+      console.error('Failed to update status:', error)
+    }
+  }, [api, selectedSession?.id])
+
+  const handleFlagSession = useCallback(async (sessionId: string) => {
+    try {
+      await api.updateSession(sessionId, { isFlagged: true })
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, isFlagged: true } : s
+      ))
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession(prev => prev ? { ...prev, isFlagged: true } : null)
+      }
+    } catch (error) {
+      console.error('Failed to flag session:', error)
+    }
+  }, [api, selectedSession?.id])
+
+  const handleUnflagSession = useCallback(async (sessionId: string) => {
+    try {
+      await api.updateSession(sessionId, { isFlagged: false })
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, isFlagged: false } : s
+      ))
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession(prev => prev ? { ...prev, isFlagged: false } : null)
+      }
+    } catch (error) {
+      console.error('Failed to unflag session:', error)
+    }
+  }, [api, selectedSession?.id])
+
+  const handleMarkUnread = useCallback(async (sessionId: string) => {
+    try {
+      await api.updateSession(sessionId, { lastReadMessageId: undefined })
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, lastReadMessageId: undefined } : s
+      ))
+    } catch (error) {
+      console.error('Failed to mark as unread:', error)
+    }
+  }, [api])
+
+  const handleRenameSession = useCallback(async (sessionId: string, newName: string) => {
+    try {
+      await api.updateSession(sessionId, { name: newName })
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, name: newName } : s
+      ))
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession(prev => prev ? { ...prev, name: newName } : null)
+      }
+    } catch (error) {
+      console.error('Failed to rename session:', error)
+    }
+  }, [api, selectedSession?.id])
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    try {
+      await api.deleteSession(sessionId)
+      setSessions(prev => prev.filter(s => s.id !== sessionId))
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession(null)
+        // Navigate to first available session
+        const remainingSessions = sessions.filter(s => s.id !== sessionId)
+        if (remainingSessions[0]) {
+          handleSelectSession(remainingSessions[0])
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error)
+    }
+  }, [api, selectedSession?.id, sessions, handleSelectSession])
+
+  const handleUpdateSessionMetadata = useCallback(async (updates: { name?: string; notes?: string }) => {
+    if (!selectedSession) return
+    try {
+      await api.updateSession(selectedSession.id, updates)
+      setSessions(prev => prev.map(s =>
+        s.id === selectedSession.id ? { ...s, ...updates } : s
+      ))
+      setSelectedSession(prev => prev ? { ...prev, ...updates } : null)
+    } catch (error) {
+      console.error('Failed to update session metadata:', error)
+    }
+  }, [api, selectedSession])
+
   // Handle section change
   const handleSectionChange = (section: NavSection) => {
     setActiveSection(section)
@@ -307,6 +410,12 @@ function MainApp() {
             isLoadingSkills={isLoadingSkills}
             onSettingsSelect={() => setShowListPanel(false)}
             platformInfo={platformInfo}
+            onSessionStatusChange={handleStatusChange}
+            onFlagSession={handleFlagSession}
+            onUnflagSession={handleUnflagSession}
+            onMarkUnread={handleMarkUnread}
+            onRenameSession={handleRenameSession}
+            onDeleteSession={handleDeleteSession}
           />
 
           {/* Main Content Panel */}
@@ -314,10 +423,20 @@ function MainApp() {
             !showListPanel ? 'flex' : 'hidden md:flex'
           }`}>
             {(activeSection === 'chats' || activeSection === 'flagged') && selectedSession ? (
-              <ChatPage
-                session={selectedSession}
-                onSessionUpdate={handleSessionUpdate}
-              />
+              <div className="flex-1 flex flex-col min-w-0 relative">
+                {/* Info button for right sidebar */}
+                <button
+                  onClick={() => setIsRightSidebarOpen(true)}
+                  className="absolute top-3 right-3 z-10 p-2 rounded-lg text-foreground-40 hover:text-foreground hover:bg-foreground/5 transition-colors hidden md:flex"
+                  title="Session details"
+                >
+                  <PanelRight className="w-4 h-4" />
+                </button>
+                <ChatPage
+                  session={selectedSession}
+                  onSessionUpdate={handleSessionUpdate}
+                />
+              </div>
             ) : activeSection === 'sources' && selectedSource ? (
               <SourceDetail source={selectedSource} workspaceId={workspaceId} />
             ) : activeSection === 'settings' ? (
@@ -330,6 +449,14 @@ function MainApp() {
               <EmptyState section={activeSection} onNewChat={handleNewSession} />
             )}
           </div>
+
+          {/* Right Sidebar - Session Details */}
+          <RightSidebar
+            session={selectedSession}
+            isOpen={isRightSidebarOpen}
+            onClose={() => setIsRightSidebarOpen(false)}
+            onUpdateSession={handleUpdateSessionMetadata}
+          />
         </div>
       </SidebarInset>
     </>
@@ -396,6 +523,12 @@ function NavigatorPanel({
   isLoadingSkills,
   onSettingsSelect,
   platformInfo,
+  onSessionStatusChange,
+  onFlagSession,
+  onUnflagSession,
+  onMarkUnread,
+  onRenameSession,
+  onDeleteSession,
 }: {
   activeSection: NavSection
   selectedStatus: SessionStatus | 'all'
@@ -416,6 +549,12 @@ function NavigatorPanel({
   isLoadingSkills: boolean
   onSettingsSelect: () => void
   platformInfo: string
+  onSessionStatusChange?: (sessionId: string, status: SessionStatus) => void
+  onFlagSession?: (sessionId: string) => void
+  onUnflagSession?: (sessionId: string) => void
+  onMarkUnread?: (sessionId: string) => void
+  onRenameSession?: (sessionId: string, newName: string) => void
+  onDeleteSession?: (sessionId: string) => void
 }) {
   return (
     <div className={`${
@@ -502,6 +641,12 @@ function NavigatorPanel({
             isLoading={isLoadingSessions}
             onSelect={onSelectSession}
             emptyMessage={selectedStatus === 'all' ? 'No sessions yet' : `No sessions in ${STATUS_CONFIG[selectedStatus].label.toLowerCase()}`}
+            onStatusChange={onSessionStatusChange}
+            onFlagSession={onFlagSession}
+            onUnflagSession={onUnflagSession}
+            onMarkUnread={onMarkUnread}
+            onRenameSession={onRenameSession}
+            onDeleteSession={onDeleteSession}
           />
         )}
 
@@ -513,6 +658,12 @@ function NavigatorPanel({
             isLoading={isLoadingSessions}
             onSelect={onSelectSession}
             emptyMessage="No flagged chats"
+            onStatusChange={onSessionStatusChange}
+            onFlagSession={onFlagSession}
+            onUnflagSession={onUnflagSession}
+            onMarkUnread={onMarkUnread}
+            onRenameSession={onRenameSession}
+            onDeleteSession={onDeleteSession}
           />
         )}
 
@@ -559,12 +710,24 @@ function SessionList({
   isLoading,
   onSelect,
   emptyMessage = 'No sessions yet',
+  onStatusChange,
+  onFlagSession,
+  onUnflagSession,
+  onMarkUnread,
+  onRenameSession,
+  onDeleteSession,
 }: {
   sessions: Session[]
   selectedSession: Session | null
   isLoading: boolean
   onSelect: (session: Session) => void
   emptyMessage?: string
+  onStatusChange?: (sessionId: string, status: SessionStatus) => void
+  onFlagSession?: (sessionId: string) => void
+  onUnflagSession?: (sessionId: string) => void
+  onMarkUnread?: (sessionId: string) => void
+  onRenameSession?: (sessionId: string, newName: string) => void
+  onDeleteSession?: (sessionId: string) => void
 }) {
   if (isLoading) {
     return (
@@ -578,46 +741,78 @@ function SessionList({
     return <p className="text-center text-foreground-40 py-8 text-sm">{emptyMessage}</p>
   }
 
+  const hasSessionActions = onStatusChange || onFlagSession || onDeleteSession
+
   return (
     <ul className="px-2 py-1">
       {sessions.map((session) => {
         const status = (session.todoState || 'backlog') as SessionStatus
         const statusConfig = STATUS_CONFIG[status]
         const StatusIcon = statusConfig.icon
+        const hasMessages = (session.messages?.length || 0) > 0
+        const hasUnreadMessages = session.lastReadMessageId
+          ? session.messages?.some(m => m.id && m.id > session.lastReadMessageId!) || false
+          : false
+
         return (
           <li key={session.id}>
-            <button
-              onClick={() => onSelect(session)}
-              className={`w-full text-left px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
-                selectedSession?.id === session.id
-                  ? 'bg-accent text-white'
-                  : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {/* Status indicator */}
-                <span className={`shrink-0 ${
-                  selectedSession?.id === session.id ? 'text-white' : statusConfig.colorClass
-                }`}>
-                  <StatusIcon className="w-3.5 h-3.5" />
-                </span>
-                <span className="font-medium truncate text-sm flex-1">
-                  {session.name || 'New Chat'}
-                </span>
-                {session.isFlagged && (
-                  <Flag className={`w-3 h-3 shrink-0 ${
-                    selectedSession?.id === session.id ? 'text-white' : 'text-accent'
-                  }`} />
+            <div className={`group relative flex items-center gap-1 px-3 py-3 md:py-2.5 rounded-lg transition-colors ${
+              selectedSession?.id === session.id
+                ? 'bg-accent text-white'
+                : 'text-foreground hover:bg-foreground/5 active:bg-foreground/10'
+            }`}>
+              {/* Main clickable area */}
+              <button
+                onClick={() => onSelect(session)}
+                className="flex-1 text-left min-w-0"
+              >
+                <div className="flex items-center gap-2">
+                  {/* Status indicator */}
+                  <span className={`shrink-0 ${
+                    selectedSession?.id === session.id ? 'text-white' : statusConfig.colorClass
+                  }`}>
+                    <StatusIcon className="w-3.5 h-3.5" />
+                  </span>
+                  <span className="font-medium truncate text-sm flex-1">
+                    {session.name || 'New Chat'}
+                  </span>
+                  {session.isFlagged && (
+                    <Flag className={`w-3 h-3 shrink-0 ${
+                      selectedSession?.id === session.id ? 'text-white' : 'text-accent'
+                    }`} />
+                  )}
+                </div>
+                {session.preview && (
+                  <p className={`text-xs truncate mt-0.5 ml-5.5 ${
+                    selectedSession?.id === session.id ? 'text-white/70' : 'text-foreground-50'
+                  }`}>
+                    {session.preview}
+                  </p>
                 )}
-              </div>
-              {session.preview && (
-                <p className={`text-xs truncate mt-0.5 ml-5.5 ${
-                  selectedSession?.id === session.id ? 'text-white/70' : 'text-foreground-50'
+              </button>
+
+              {/* Session menu */}
+              {hasSessionActions && (
+                <div className={`shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ${
+                  selectedSession?.id === session.id ? 'opacity-100' : ''
                 }`}>
-                  {session.preview}
-                </p>
+                  <SessionMenu
+                    sessionId={session.id}
+                    sessionName={session.name || 'New Chat'}
+                    isFlagged={session.isFlagged || false}
+                    hasMessages={hasMessages}
+                    hasUnreadMessages={hasUnreadMessages}
+                    currentStatus={status}
+                    onStatusChange={(newStatus) => onStatusChange?.(session.id, newStatus)}
+                    onFlag={() => onFlagSession?.(session.id)}
+                    onUnflag={() => onUnflagSession?.(session.id)}
+                    onMarkUnread={() => onMarkUnread?.(session.id)}
+                    onRename={(newName) => onRenameSession?.(session.id, newName)}
+                    onDelete={() => onDeleteSession?.(session.id)}
+                  />
+                </div>
               )}
-            </button>
+            </div>
           </li>
         )
       })}
