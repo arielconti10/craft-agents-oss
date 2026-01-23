@@ -41,6 +41,7 @@ import {
   Image as ImageIcon,
   File,
 } from 'lucide-react'
+import { useEscapeInterrupt, EscapeInterruptOverlay } from '../hooks/useEscapeInterrupt'
 
 interface ChatPageProps {
   session: Session
@@ -189,6 +190,14 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
 
   // File attachments
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
+
+  // Double-Esc interrupt handler
+  const { isWaitingForSecondEsc } = useEscapeInterrupt({
+    enabled: isProcessing,
+    onInterrupt: () => {
+      api.cancelProcessing(session.id).catch(console.error)
+    },
+  })
 
   // Reset state when session changes
   useEffect(() => {
@@ -703,7 +712,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
   // Show empty state for new sessions
   if (session.messages.length === 0 && streamingMessages.length === 0) {
     return (
-      <div className="flex flex-col h-full bg-foreground-1.5">
+      <div className="flex flex-col h-full bg-foreground-1.5 relative">
         {header}
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center text-foreground-40 py-16 px-4">
@@ -712,6 +721,7 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
           </div>
         </div>
         {footer}
+        <EscapeInterruptOverlay isVisible={isWaitingForSecondEsc} />
       </div>
     )
   }
@@ -758,6 +768,9 @@ export function ChatPage({ session, onSessionUpdate }: ChatPageProps) {
             onClose={handleCloseOverlay}
           />
         )}
+
+        {/* Escape interrupt indicator */}
+        <EscapeInterruptOverlay isVisible={isWaitingForSecondEsc} />
       </div>
     </PlatformProvider>
   )
