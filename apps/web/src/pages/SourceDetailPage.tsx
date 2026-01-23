@@ -166,8 +166,8 @@ export function SourceDetailPage({ source, workspaceId, onRefresh }: SourceDetai
   const blockedTools = tools.filter(t => !t.allowed).length
 
   return (
-    <div className="flex-1 bg-foreground-1.5 overflow-y-auto">
-      <div className="max-w-3xl mx-auto p-4 md:p-8 space-y-6">
+    <div className="flex-1 min-h-0 bg-foreground-1.5 overflow-y-auto">
+      <div className="max-w-3xl mx-auto p-4 md:p-8 pb-safe space-y-6">
         {/* Header */}
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 rounded-xl bg-accent/10 flex items-center justify-center shrink-0">
