@@ -51,11 +51,16 @@ authRoutes.get('/state', authMiddleware, async (c) => {
 
   // Build auth state
   const authState: AuthState = {
-    isAuthenticated: true,
-    hasValidCredential: true,
-    authType: 'api_key',
-    // TODO: Load actual workspaces for user
-    workspaces: [],
+    billing: {
+      type: 'api_key',
+      hasCredentials: true,
+      apiKey: null, // Don't expose the actual key
+      claudeOAuthToken: null,
+    },
+    workspace: {
+      hasWorkspace: false,
+      active: null,
+    },
   }
 
   return c.json(authState)

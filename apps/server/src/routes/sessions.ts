@@ -118,7 +118,7 @@ sessionsRoutes.post('/:id/message', async (c) => {
 sessionsRoutes.post('/:id/cancel', async (c) => {
   const user = c.get('user')
   const sessionId = c.req.param('id')
-  const body = await c.req.json<{ silent?: boolean }>().catch(() => ({}))
+  const body = await c.req.json<{ silent?: boolean }>().catch(() => ({ silent: false }))
   const manager = getSessionManager()
 
   await manager.cancelProcessing(user.id, sessionId, body.silent)

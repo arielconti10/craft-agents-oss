@@ -26,14 +26,50 @@ import type { LoadedSkill } from '@craft-agent/shared/skills/types'
 import type { StatusConfig } from '@craft-agent/shared/statuses'
 import type { AuthType } from '@craft-agent/shared/config/types'
 import type { ThemeOverrides, PresetTheme } from '@craft-agent/shared/config/theme'
-import type { PermissionsConfigFile } from '@craft-agent/shared/agent'
+import type { PermissionsConfigFile, PermissionMode } from '@craft-agent/shared/agent'
+import type { AgentEvent, Message, TokenUsage } from '@craft-agent/core/types'
+import { generateMessageId } from '@craft-agent/core/types'
+import { CraftAgent } from '@craft-agent/shared/agent'
 import { broadcastSessionEvent } from '../ws/handler'
+
+/**
+ * Extended session with messages
+ */
+interface SessionWithMessages extends Session {
+  messages: Message[]
+}
+
+/**
+ * Managed session state - holds agent instance and runtime state
+ */
+interface ManagedSession {
+  id: string
+  userId: string
+  workspaceId: string
+  workspaceName: string
+  agent: CraftAgent | null
+  messages: Message[]
+  isProcessing: boolean
+  lastMessageAt: number
+  streamingText: string
+  abortController?: AbortController
+  name?: string
+  isFlagged: boolean
+  permissionMode?: PermissionMode
+  sdkSessionId?: string
+  tokenUsage?: TokenUsage
+  todoState?: string
+  thinkingLevel?: 'off' | 'think' | 'max'
+  model?: string
+  // Pending permission request resolvers
+  pendingPermissions: Map<string, (allowed: boolean, alwaysAllow?: boolean) => void>
+}
 
 /**
  * User session state
  */
 interface UserState {
-  sessions: Map<string, Session>
+  sessions: Map<string, ManagedSession>
   workspaces: Map<string, Workspace>
   drafts: Map<string, string>
   settings: {
@@ -81,18 +117,109 @@ class ServerSessionManager {
     broadcastSessionEvent(sessionId, event)
   }
 
+  /**
+   * Get or create an agent for a session
+   */
+  private async getOrCreateAgent(managed: ManagedSession, userId: string): Promise<CraftAgent> {
+    if (managed.agent) {
+      return managed.agent
+    }
+
+    const state = this.getUserState(userId)
+    const workspace = state.workspaces.get(managed.workspaceId)
+
+    // Create workspace object for agent
+    const workspaceConfig: Workspace = {
+      id: managed.workspaceId,
+      name: workspace?.name || managed.workspaceName,
+      rootPath: workspace?.rootPath || '/tmp/workspace',
+      createdAt: Date.now(),
+    }
+
+    // Get model from session, user settings, or default
+    const model = managed.model || state.settings.model || undefined
+
+    // Create the agent
+    managed.agent = new CraftAgent({
+      workspace: workspaceConfig,
+      model,
+      thinkingLevel: managed.thinkingLevel || 'think',
+      session: {
+        id: managed.id,
+        workspaceRootPath: workspaceConfig.rootPath,
+        sdkSessionId: managed.sdkSessionId,
+        createdAt: managed.lastMessageAt,
+        lastUsedAt: managed.lastMessageAt,
+      },
+      onSdkSessionIdUpdate: (sdkSessionId: string) => {
+        managed.sdkSessionId = sdkSessionId
+        console.log(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
+      },
+    })
+
+    // Set up permission handler
+    managed.agent.onPermissionRequest = (request) => {
+      console.log(`Permission request for session ${managed.id}:`, request.command)
+      this.broadcast(managed.id, {
+        type: 'permission_request',
+        sessionId: managed.id,
+        request: {
+          sessionId: managed.id,
+          requestId: request.requestId,
+          toolName: request.toolName,
+          toolInput: { command: request.command, description: request.description },
+        },
+      } as SessionEvent)
+    }
+
+    // Set up permission mode change handler
+    managed.agent.onPermissionModeChange = (mode) => {
+      console.log(`Permission mode changed for session ${managed.id}:`, mode)
+      managed.permissionMode = mode
+      this.broadcast(managed.id, {
+        type: 'permission_mode_changed',
+        sessionId: managed.id,
+        permissionMode: mode,
+      } as SessionEvent)
+    }
+
+    console.log(`Created agent for session ${managed.id}`)
+    return managed.agent
+  }
+
+  /**
+   * Convert ManagedSession to Session for API responses
+   */
+  private toSession(managed: ManagedSession): Session {
+    return {
+      id: managed.id,
+      workspaceId: managed.workspaceId,
+      workspaceName: managed.workspaceName,
+      lastMessageAt: managed.lastMessageAt,
+      messages: managed.messages,
+      isProcessing: managed.isProcessing,
+      name: managed.name,
+      isFlagged: managed.isFlagged,
+      permissionMode: managed.permissionMode,
+      todoState: managed.todoState,
+      thinkingLevel: managed.thinkingLevel,
+      tokenUsage: managed.tokenUsage,
+    }
+  }
+
   // ==========================================
   // Session Management
   // ==========================================
 
   async getSessions(userId: string): Promise<Session[]> {
     const state = this.getUserState(userId)
-    return Array.from(state.sessions.values())
+    return Array.from(state.sessions.values()).map(m => this.toSession(m))
   }
 
   async getSessionMessages(userId: string, sessionId: string): Promise<Session | null> {
     const state = this.getUserState(userId)
-    return state.sessions.get(sessionId) ?? null
+    const managed = state.sessions.get(sessionId)
+    return managed ? this.toSession(managed) : null
   }
 
   async createSession(
@@ -105,23 +232,34 @@ class ServerSessionManager {
     const workspace = state.workspaces.get(workspaceId)
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
-    const session: Session = {
+    const managed: ManagedSession = {
       id: sessionId,
+      userId,
       workspaceId,
       workspaceName: workspace?.name || 'Workspace',
-      lastMessageAt: Date.now(),
+      agent: null,
       messages: [],
       isProcessing: false,
-      permissionMode: options?.permissionMode,
-      workingDirectory: options?.workingDirectory === 'none' ? undefined : options?.workingDirectory,
+      lastMessageAt: Date.now(),
+      streamingText: '',
+      isFlagged: false,
+      permissionMode: options?.permissionMode as PermissionMode | undefined,
+      pendingPermissions: new Map(),
     }
 
-    state.sessions.set(sessionId, session)
-    return session
+    state.sessions.set(sessionId, managed)
+    return this.toSession(managed)
   }
 
   async deleteSession(userId: string, sessionId: string): Promise<void> {
     const state = this.getUserState(userId)
+    const managed = state.sessions.get(sessionId)
+
+    // Clean up agent if exists
+    if (managed?.agent) {
+      // Agent cleanup would go here
+    }
+
     state.sessions.delete(sessionId)
     state.drafts.delete(sessionId)
 
@@ -137,24 +275,44 @@ class ServerSessionManager {
     _options?: unknown
   ): Promise<void> {
     const state = this.getUserState(userId)
-    const session = state.sessions.get(sessionId)
+    const managed = state.sessions.get(sessionId)
 
-    if (!session) {
+    if (!managed) {
       throw new Error('Session not found')
     }
 
+    // Check if API key is configured
+    const billingMethod = state.settings.billingMethod
+    if (!billingMethod.hasCredential || !billingMethod.apiKey) {
+      // Send error event
+      this.broadcast(sessionId, {
+        type: 'error',
+        sessionId,
+        error: 'No API key configured. Please add your Anthropic API key in Settings.',
+      } as SessionEvent)
+      return
+    }
+
+    // Set the API key in environment for the agent
+    process.env.ANTHROPIC_API_KEY = billingMethod.apiKey
+    if (billingMethod.anthropicBaseUrl) {
+      process.env.ANTHROPIC_BASE_URL = billingMethod.anthropicBaseUrl
+    }
+
     // Mark as processing
-    session.isProcessing = true
+    managed.isProcessing = true
+    managed.streamingText = ''
+    managed.abortController = new AbortController()
 
     // Add user message
-    const userMessage = {
-      id: `msg_${Date.now()}`,
-      role: 'user' as const,
+    const userMessage: Message = {
+      id: generateMessageId(),
+      role: 'user',
       content: message,
       timestamp: Date.now(),
     }
-    session.messages.push(userMessage)
-    session.lastMessageAt = Date.now()
+    managed.messages.push(userMessage)
+    managed.lastMessageAt = Date.now()
 
     // Broadcast user message event
     this.broadcast(sessionId, {
@@ -162,39 +320,328 @@ class ServerSessionManager {
       sessionId,
       message: userMessage,
       status: 'processing',
-    })
+    } as SessionEvent)
 
-    // TODO: Implement actual agent execution
-    // For now, simulate a response
-    setTimeout(() => {
-      const assistantMessage = {
-        id: `msg_${Date.now()}`,
-        role: 'assistant' as const,
-        content: `This is a placeholder response. The server-side agent execution is not yet implemented.\n\nYour message was: "${message}"`,
-        timestamp: Date.now(),
-      }
-      session.messages.push(assistantMessage)
-      session.isProcessing = false
-
+    // Generate title from first message
+    if (!managed.name && managed.messages.filter(m => m.role === 'user').length === 1) {
+      const initialTitle = message.slice(0, 50) + (message.length > 50 ? '...' : '')
+      managed.name = initialTitle
       this.broadcast(sessionId, {
-        type: 'text_complete',
+        type: 'title_generated',
         sessionId,
-        text: assistantMessage.content,
-      })
+        title: initialTitle,
+      } as SessionEvent)
+    }
 
+    try {
+      // Get or create agent
+      const agent = await this.getOrCreateAgent(managed, userId)
+
+      console.log(`Starting chat for session ${sessionId}`)
+      console.log(`Message: ${message}`)
+      console.log(`Model: ${agent.getModel()}`)
+
+      // Process the message through the agent
+      const chatIterator = agent.chat(message)
+
+      // Current turn ID for grouping events
+      let currentTurnId: string | undefined
+
+      for await (const event of chatIterator) {
+        // Log events (skip noisy text_delta)
+        if (event.type !== 'text_delta') {
+          console.log(`Event: ${event.type}`, event)
+        }
+
+        // Process and broadcast the event
+        this.processAgentEvent(managed, event)
+
+        // Handle complete event
+        if (event.type === 'complete') {
+          console.log('Chat completed')
+          managed.isProcessing = false
+
+          // Update token usage
+          if (event.usage) {
+            managed.tokenUsage = {
+              inputTokens: event.usage.inputTokens,
+              outputTokens: event.usage.outputTokens,
+              totalTokens: event.usage.inputTokens + event.usage.outputTokens,
+              contextTokens: event.usage.inputTokens,
+              costUsd: event.usage.costUsd || 0,
+              cacheReadTokens: event.usage.cacheReadTokens,
+              cacheCreationTokens: event.usage.cacheCreationTokens,
+            }
+          }
+
+          this.broadcast(sessionId, {
+            type: 'complete',
+            sessionId,
+            tokenUsage: managed.tokenUsage,
+          } as SessionEvent)
+          return
+        }
+
+        // Check if processing was cancelled
+        if (!managed.isProcessing) {
+          console.log('Processing cancelled, breaking')
+          break
+        }
+      }
+    } catch (error) {
+      console.error('Error in chat:', error)
+
+      const isAbortError = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message === 'Request was aborted.' ||
+        error.message.includes('aborted')
+      )
+
+      if (isAbortError) {
+        console.log('Chat aborted by user')
+        this.broadcast(sessionId, {
+          type: 'interrupted',
+          sessionId,
+        } as SessionEvent)
+      } else {
+        // Handle error
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+
+        // Add error message to session
+        const errorMsg: Message = {
+          id: generateMessageId(),
+          role: 'error',
+          content: errorMessage,
+          timestamp: Date.now(),
+          isError: true,
+        }
+        managed.messages.push(errorMsg)
+
+        this.broadcast(sessionId, {
+          type: 'error',
+          sessionId,
+          error: errorMessage,
+        } as SessionEvent)
+      }
+    } finally {
+      managed.isProcessing = false
+      managed.abortController = undefined
+
+      // Send complete event
       this.broadcast(sessionId, {
         type: 'complete',
         sessionId,
-      })
-    }, 1000)
+        tokenUsage: managed.tokenUsage,
+      } as SessionEvent)
+    }
+  }
+
+  /**
+   * Process an agent event and broadcast to WebSocket
+   */
+  private processAgentEvent(managed: ManagedSession, event: AgentEvent): void {
+    const sessionId = managed.id
+
+    switch (event.type) {
+      case 'text_delta':
+        // Accumulate streaming text
+        managed.streamingText += event.text
+        this.broadcast(sessionId, {
+          type: 'text_delta',
+          sessionId,
+          delta: event.text,
+          turnId: event.turnId,
+        } as SessionEvent)
+        break
+
+      case 'text_complete':
+        // Add complete assistant message
+        const assistantMessage: Message = {
+          id: generateMessageId(),
+          role: 'assistant',
+          content: event.text,
+          timestamp: Date.now(),
+          isIntermediate: event.isIntermediate,
+          turnId: event.turnId,
+        }
+        managed.messages.push(assistantMessage)
+        managed.streamingText = ''
+
+        this.broadcast(sessionId, {
+          type: 'text_complete',
+          sessionId,
+          text: event.text,
+          isIntermediate: event.isIntermediate,
+          turnId: event.turnId,
+        } as SessionEvent)
+        break
+
+      case 'tool_start':
+        // Add tool message
+        const toolMessage: Message = {
+          id: generateMessageId(),
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: event.toolName,
+          toolUseId: event.toolUseId,
+          toolInput: event.input,
+          toolStatus: 'executing',
+          toolIntent: event.intent,
+          toolDisplayName: event.displayName,
+          turnId: event.turnId,
+          parentToolUseId: event.parentToolUseId,
+        }
+        managed.messages.push(toolMessage)
+
+        this.broadcast(sessionId, {
+          type: 'tool_start',
+          sessionId,
+          toolName: event.toolName,
+          toolUseId: event.toolUseId,
+          toolInput: event.input,
+          toolIntent: event.intent,
+          toolDisplayName: event.displayName,
+          turnId: event.turnId,
+          parentToolUseId: event.parentToolUseId,
+        } as SessionEvent)
+        break
+
+      case 'tool_result':
+        // Update existing tool message with result
+        const toolMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
+        const toolName = toolMsg?.toolName || 'unknown'
+        if (toolMsg) {
+          toolMsg.toolResult = event.result
+          toolMsg.toolStatus = event.isError ? 'error' : 'completed'
+          toolMsg.isError = event.isError
+        }
+
+        this.broadcast(sessionId, {
+          type: 'tool_result',
+          sessionId,
+          toolUseId: event.toolUseId,
+          toolName,
+          result: event.result,
+          isError: event.isError,
+          turnId: event.turnId,
+        } as SessionEvent)
+        break
+
+      case 'permission_request':
+        this.broadcast(sessionId, {
+          type: 'permission_request',
+          sessionId,
+          request: {
+            sessionId,
+            requestId: event.requestId,
+            toolName: event.toolName,
+            toolInput: { command: event.command, description: event.description },
+          },
+        } as SessionEvent)
+        break
+
+      case 'error':
+        const errMsg: Message = {
+          id: generateMessageId(),
+          role: 'error',
+          content: event.message,
+          timestamp: Date.now(),
+          isError: true,
+        }
+        managed.messages.push(errMsg)
+
+        this.broadcast(sessionId, {
+          type: 'error',
+          sessionId,
+          error: event.message,
+        } as SessionEvent)
+        break
+
+      case 'typed_error':
+        const typedErrMsg: Message = {
+          id: generateMessageId(),
+          role: 'error',
+          content: event.error.message,
+          timestamp: Date.now(),
+          isError: true,
+          errorCode: event.error.code,
+          errorTitle: event.error.title,
+          errorDetails: event.error.details,
+          errorOriginal: event.error.originalError,
+          errorCanRetry: event.error.canRetry,
+        }
+        managed.messages.push(typedErrMsg)
+
+        this.broadcast(sessionId, {
+          type: 'typed_error',
+          sessionId,
+          error: event.error,
+        } as SessionEvent)
+        break
+
+      case 'status':
+        this.broadcast(sessionId, {
+          type: 'status',
+          sessionId,
+          message: event.message,
+        } as SessionEvent)
+        break
+
+      case 'info':
+        this.broadcast(sessionId, {
+          type: 'info',
+          sessionId,
+          message: event.message,
+        } as SessionEvent)
+        break
+
+      case 'usage_update':
+        this.broadcast(sessionId, {
+          type: 'usage_update',
+          sessionId,
+          tokenUsage: {
+            inputTokens: event.usage.inputTokens,
+            contextWindow: event.usage.contextWindow,
+          },
+        } as SessionEvent)
+        break
+
+      case 'task_backgrounded':
+      case 'shell_backgrounded':
+      case 'task_progress':
+      case 'shell_killed':
+        // Forward background task events
+        this.broadcast(sessionId, {
+          ...event,
+          sessionId,
+        } as SessionEvent)
+        break
+
+      // Ignore events that don't need broadcasting
+      case 'complete':
+      case 'working_directory_changed':
+      case 'source_activated':
+      case 'parent_update':
+        break
+
+      default:
+        console.log(`Unhandled event type: ${(event as AgentEvent).type}`)
+    }
   }
 
   async cancelProcessing(userId: string, sessionId: string, _silent?: boolean): Promise<void> {
     const state = this.getUserState(userId)
-    const session = state.sessions.get(sessionId)
+    const managed = state.sessions.get(sessionId)
 
-    if (session) {
-      session.isProcessing = false
+    if (managed && managed.isProcessing) {
+      managed.isProcessing = false
+
+      // Abort the agent
+      if (managed.agent) {
+        managed.agent.forceAbort()
+      }
+
       this.broadcast(sessionId, { type: 'interrupted', sessionId })
     }
   }
@@ -214,13 +661,26 @@ class ServerSessionManager {
   }
 
   async respondToPermission(
-    _userId: string,
-    _sessionId: string,
-    _requestId: string,
-    _allowed: boolean,
+    userId: string,
+    sessionId: string,
+    requestId: string,
+    allowed: boolean,
     _alwaysAllow: boolean
   ): Promise<boolean> {
-    // TODO: Implement permission response
+    const state = this.getUserState(userId)
+    const managed = state.sessions.get(sessionId)
+
+    if (!managed?.agent) {
+      return false
+    }
+
+    // Resolve the pending permission
+    const resolver = managed.pendingPermissions.get(requestId)
+    if (resolver) {
+      resolver(allowed)
+      managed.pendingPermissions.delete(requestId)
+    }
+
     return true
   }
 
@@ -240,40 +700,40 @@ class ServerSessionManager {
     command: SessionCommand
   ): Promise<void | ShareResult | RefreshTitleResult> {
     const state = this.getUserState(userId)
-    const session = state.sessions.get(sessionId)
+    const managed = state.sessions.get(sessionId)
 
-    if (!session) {
+    if (!managed) {
       throw new Error('Session not found')
     }
 
     switch (command.type) {
       case 'flag':
-        session.isFlagged = true
+        managed.isFlagged = true
         this.broadcast(sessionId, { type: 'session_flagged', sessionId })
         break
 
       case 'unflag':
-        session.isFlagged = false
+        managed.isFlagged = false
         this.broadcast(sessionId, { type: 'session_unflagged', sessionId })
         break
 
       case 'rename':
-        session.name = command.name
+        managed.name = command.name
         this.broadcast(sessionId, { type: 'title_generated', sessionId, title: command.name })
         break
 
       case 'setTodoState':
-        session.todoState = command.state
+        managed.todoState = command.state
         this.broadcast(sessionId, { type: 'todo_state_changed', sessionId, todoState: command.state })
         break
 
       case 'setPermissionMode':
-        session.permissionMode = command.mode
+        managed.permissionMode = command.mode as PermissionMode
         this.broadcast(sessionId, { type: 'permission_mode_changed', sessionId, permissionMode: command.mode })
         break
 
       case 'setThinkingLevel':
-        session.thinkingLevel = command.level
+        managed.thinkingLevel = command.level
         break
 
       case 'shareToViewer':
@@ -282,7 +742,7 @@ class ServerSessionManager {
 
       case 'refreshTitle':
         // TODO: Implement title generation
-        return { success: true, title: session.name || 'New Chat' }
+        return { success: true, title: managed.name || 'New Chat' }
 
       default:
         // Other commands handled silently
@@ -302,8 +762,8 @@ class ServerSessionManager {
       const defaultWorkspace: Workspace = {
         id: 'default',
         name: 'Default Workspace',
-        slug: 'default',
         rootPath: '/workspace',
+        createdAt: Date.now(),
       }
       state.workspaces.set('default', defaultWorkspace)
     }
@@ -318,8 +778,8 @@ class ServerSessionManager {
     const workspace: Workspace = {
       id,
       name,
-      slug: name.toLowerCase().replace(/\s+/g, '-'),
       rootPath: `/workspaces/${id}`,
+      createdAt: Date.now(),
     }
 
     state.workspaces.set(id, workspace)
@@ -424,11 +884,11 @@ class ServerSessionManager {
   async listStatuses(_userId: string, _workspaceId: string): Promise<StatusConfig[]> {
     // Return default statuses
     return [
-      { id: 'todo', name: 'To Do', color: '#6B7280' },
-      { id: 'in-progress', name: 'In Progress', color: '#3B82F6' },
-      { id: 'needs-review', name: 'Needs Review', color: '#F59E0B' },
-      { id: 'done', name: 'Done', color: '#10B981' },
-      { id: 'cancelled', name: 'Cancelled', color: '#EF4444' },
+      { id: 'todo', label: 'To Do', color: '#6B7280', category: 'open', isFixed: true, isDefault: false, order: 0 },
+      { id: 'in-progress', label: 'In Progress', color: '#3B82F6', category: 'open', isFixed: false, isDefault: true, order: 1 },
+      { id: 'needs-review', label: 'Needs Review', color: '#F59E0B', category: 'open', isFixed: false, isDefault: true, order: 2 },
+      { id: 'done', label: 'Done', color: '#10B981', category: 'closed', isFixed: true, isDefault: false, order: 3 },
+      { id: 'cancelled', label: 'Cancelled', color: '#EF4444', category: 'closed', isFixed: true, isDefault: false, order: 4 },
     ]
   }
 
@@ -499,13 +959,13 @@ class ServerSessionManager {
   }
 
   async loadPresetThemes(): Promise<PresetTheme[]> {
-    // Return some default themes
+    // Return some default themes with minimal theme data
     return [
-      { id: 'system', name: 'System', colors: {} },
-      { id: 'light', name: 'Light', colors: {} },
-      { id: 'dark', name: 'Dark', colors: {} },
-      { id: 'dracula', name: 'Dracula', colors: {} },
-      { id: 'nord', name: 'Nord', colors: {} },
+      { id: 'system', path: '/themes/system.json', theme: { name: 'System' } },
+      { id: 'light', path: '/themes/light.json', theme: { name: 'Light' } },
+      { id: 'dark', path: '/themes/dark.json', theme: { name: 'Dark' } },
+      { id: 'dracula', path: '/themes/dracula.json', theme: { name: 'Dracula' } },
+      { id: 'nord', path: '/themes/nord.json', theme: { name: 'Nord' } },
     ]
   }
 

@@ -12,7 +12,7 @@
  */
 
 import type { Message, Workspace, StoredAttachment, ContentBadge } from '@craft-agent/core/types'
-import type { PermissionMode } from '../agent/modes'
+import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { LoadedSource, FolderSourceConfig } from '../sources/types'
 import type { LoadedSkill } from '../skills/types'
